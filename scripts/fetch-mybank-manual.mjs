@@ -25,6 +25,15 @@ const NAV_FILE = path.join(ROOT, "净值数据.json");
 const REG_FILE = path.join(ROOT, "产品数据.json");
 const MYBANK = "mybank";
 
+// 调试开关（供 GitHub Actions workflow_dispatch 传入）：
+//   MYBANK_FORCE_CODES=109463WS,EW6729D → 强制重抠这些码（即使已有登记编码），用于验证链路
+//   MYBANK_DRY_RUN=1                    → 只打印抠码结果、不写盘（零数据风险地验证链路）
+const FORCE = new Set(
+  String(process.env.MYBANK_FORCE_CODES || "")
+    .split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)
+);
+const DRY = /^(1|true|yes)$/i.test(String(process.env.MYBANK_DRY_RUN || ""));
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* ---------- 解析 registry，收集 bank=mybank 的产品码 + 静态字段 ---------- */
@@ -105,11 +114,13 @@ async function main() {
   const results = [];
   for (const code of codes) {
     const prev = real[code] || null;
+    const forced = FORCE.has(code);
     // 已有登记编码则跳过：避免重复抠（省时/省网商接口配额），也避免覆盖已有净值序列
-    if (prev && prev.regCode) {
+    if (!forced && prev && prev.regCode) {
       results.push({ code, ok: "skip", reason: "已有登记编码" });
       continue;
     }
+    if (forced) console.log("[mybank-manual] " + code + " 强制重抠（调试模式）");
     let info = null;
     for (let attempt = 1; attempt <= 2 && !info; attempt++) {
       if (attempt > 1) { console.log("[mybank-manual] " + code + " 第" + attempt + "次重试"); await sleep(2000); }
@@ -146,6 +157,11 @@ async function main() {
   // 写回净值数据.json（保持外层结构；仅当七字段真正变化才写盘/更新 savedAt，避免无意义 commit）
   const prevRealStr = (outer.data && outer.data.observer_lookup_real) || "";
   const newRealStr = JSON.stringify(real);
+  if (DRY) {
+    console.log("[mybank-manual] DRY-RUN：验证模式，不写盘（抠码结果见上方日志）");
+    console.log("[mybank-manual] 明细：" + JSON.stringify(results));
+    return;
+  }
   if (newRealStr === prevRealStr) {
     console.log("[mybank-manual] 完成：七字段无变化，跳过写盘");
     console.log("[mybank-manual] 明细：" + JSON.stringify(results));

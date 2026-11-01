@@ -8,7 +8,16 @@ on:
     #   · 缺登记编码   → 在带 Chrome 的 runner 上走网商说明书 PDF 链路抠七字段
     # 因此空跑几乎零成本（仅几百毫秒读 registry），而新增产品最多 1 小时内自动补全。
     - cron: "0 * * * *"
-  workflow_dispatch: {}   # 允许手动触发（添加网商产品后可立即补全）
+  workflow_dispatch:
+    inputs:
+      force_codes:
+        description: "强制重抠的产品码（逗号分隔，仅调试用）"
+        required: false
+        default: ""
+      dry_run:
+        description: "只打印抠码结果、不写盘（用于验证链路，零数据风险）"
+        type: boolean
+        default: false
 
 permissions:
   contents: write        # 写回 净值数据.json 并推回 main
@@ -48,6 +57,9 @@ jobs:
           "$BIN" --version
 
       - name: 补全网商产品七字段（说明书 PDF 抠登记编码）
+        env:
+          MYBANK_FORCE_CODES: ${{ inputs.force_codes }}
+          MYBANK_DRY_RUN: ${{ inputs.dry_run }}
         run: node scripts/fetch-mybank-manual.mjs
 
       - name: 提交（仅当 净值数据.json 有变化）
