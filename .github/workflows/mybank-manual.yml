@@ -1,0 +1,63 @@
+name: 补全网商产品七字段
+
+on:
+  schedule:
+    # 每小时整点触发（cron 以 UTC 计，小时级在任意时区都是每小时）。
+    # 只处理「registry 里有、但尚无登记编码」的网商(mybank)代销产品：
+    #   · 已有登记编码 → 直接跳过（不调网商接口，零开销）
+    #   · 缺登记编码   → 在带 Chrome 的 runner 上走网商说明书 PDF 链路抠七字段
+    # 因此空跑几乎零成本（仅几百毫秒读 registry），而新增产品最多 1 小时内自动补全。
+    - cron: "0 * * * *"
+  workflow_dispatch: {}   # 允许手动触发（添加网商产品后可立即补全）
+
+permissions:
+  contents: write        # 写回 净值数据.json 并推回 main
+
+concurrency:
+  group: mybank-manual
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 确保 Chrome 可用（runner 预装则直接用，缺失则安装）
+        run: |
+          BIN="$(which google-chrome-stable || which google-chrome || true)"
+          if [ -z "$BIN" ]; then
+            echo "runner 未预装 Chrome → 安装 Google Chrome stable"
+            wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq /tmp/chrome.deb
+            BIN="$(which google-chrome-stable || which google-chrome || true)"
+          fi
+          if [ -z "$BIN" ]; then echo "::error::Chrome 不可用"; exit 1; fi
+          # 网商链路（APSign 签名 + 说明书 PDF 提取）需要 Chrome 与可写临时目录
+          echo "CHROME_BIN=$BIN" >> "$GITHUB_ENV"
+          echo "MYBANK_CACHE_DIR=/tmp/mybank-cache" >> "$GITHUB_ENV"
+          echo "Chrome: $BIN"
+          "$BIN" --version
+
+      - name: 补全网商产品七字段（说明书 PDF 抠登记编码）
+        run: node scripts/fetch-mybank-manual.mjs
+
+      - name: 提交（仅当 净值数据.json 有变化）
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add 净值数据.json
+          if git diff --cached --quiet; then
+            echo "净值数据.json 无变化，跳过提交"
+          else
+            git commit -m "chore: 自动补全网商产品七字段 $(date -u +%Y-%m-%d)"
+            git push
+          fi
