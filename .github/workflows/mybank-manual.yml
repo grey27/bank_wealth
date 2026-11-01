@@ -37,7 +37,9 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # 必须 ≥22：Chrome CDP 客户端用的是 Node 22 才提供的全局 WebSocket
+          # （Node 20 无全局 WebSocket → jshield_signer/pdf_extract 会 ReferenceError 崩掉）
+          node-version: "22"
 
       - name: 确保 Chrome 可用（runner 预装则直接用，缺失则安装）
         run: |

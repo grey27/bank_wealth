@@ -94,6 +94,13 @@ export async function extractPdfText(pdfPath, opts = {}) {
     try { const j = await (await fetch(`http://127.0.0.1:${PORT}/json/version`)).json(); wsUrl = j.webSocketDebuggerUrl; if (wsUrl) break; } catch {}
     await sleep(250);
   }
+  if (typeof globalThis.WebSocket !== "function") {
+    kill();
+    await sleep(500);
+    await rmProfile();
+    srv.close();
+    return { error: "当前 Node 运行时缺少全局 WebSocket（需 Node ≥ 22）：Chrome CDP 客户端依赖它" };
+  }
   const ws = new WebSocket(wsUrl);
   let id = 0; const pending = new Map();
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });

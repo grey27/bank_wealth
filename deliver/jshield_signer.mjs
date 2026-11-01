@@ -58,6 +58,9 @@ async function getWsUrl() {
   throw new Error("chrome devtools not ready");
 }
 
+if (typeof globalThis.WebSocket !== "function") {
+  throw new Error("当前 Node 运行时缺少全局 WebSocket（需 Node ≥ 22）：Chrome CDP 客户端依赖它");
+}
 const ws = new WebSocket(await getWsUrl());
 let id = 0;
 const pending = new Map();
