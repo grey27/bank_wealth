@@ -306,7 +306,7 @@ const UPSTREAM_TIMEOUT_MS = 25000;
 const CACHE_TTL_SEC = 6 * 60 * 60;
 
 // /api/fetch 返回结构版本号。改动返回字段时 +1（v1→v2→…），让旧结构缓存立即失效。
-const CACHE_VERSION = "v38"; // v38：**线上 /api/predict 启用**——RULES_JSON_URL 由空串改为 https://lclist.github.io/predict-rules.json（仓库根 predict-rules.json，与本地 predict_bank.js 同一份 v4 规则）。此前线上 /api/predict 恒返 503「predict unavailable」→ 前端回退「仅查下拉框单家」，与本地「预判发行行→下拉框代销行→预判其它发行行→预判其它代销行→剩余行」的有序多银行尝试不一致；现两端口径统一。规则 JSON 用 ASCII 文件名以避开中文路径的百分号编码差异。  // v37：**份额码桥接改为「码优先」** —— 原实现只按产品名检索信披平台取份额码，且打分把「名称完全相同(90)」排在「代码数字体一致(80)」之前；工银·鑫悦打新策略优选最短持有90天混合类开放在平台上有 **4 个同名产品**（subShare 26H6066A/26H6399F/26H6055C/26H6060H，净值各异），名检索可能命中**另一个产品**的份额码 → 拿它去工行官网查 → 把别的产品净值当本产品入库，来源还显示「工商银行官网」（比抓不到更坏）。现三层修复：① 份额码桥接**优先按登记编码**取本产品的份额族（xplRegToShareFamily，全程不碰产品名）；② 名检索剔除「同形不同数」的异产品行（xplForeignCode：字母骨架折叠重复字母后相同、而数字体不同 ⇒ 必属不同产品；同一产品的各份额码数字体恒相同）；③ 推导出的份额码再过一遍同形校验，不合则拒绝采用。  // v36：中国理财网(xpl)熔断器根治——原实现「模块级全局熔断 + 单次握手失败即熔 10 分钟 + 窗口内绝不做试探」，而 XPL_CIRCUIT 在 Cloudflare Workers 里是**同一 isolate 内所有请求共享**的模块级变量 → 任何一次握手抖动都会让该 isolate 上随后 10 分钟内所有产品的中国理财网兜底全部 0ms 秒返 null → 全站该通道集体「未抓到」（实测 5 个互不相关产品同时 404、兜底阶段均 0ms null）。现改为：①按请求计数（xplFetch 内部 2 次 attempt 只算 1 次失败）+ 连续失败 ≥2 次才熔断；②窗口分级递增(30s→60s→…→10min)；③窗口内每 20s 放行单个半开探测，上游恢复即全站立即恢复；④握手失败不写负缓存（原实现对「握手失败」与「查无此产品」一律写 60s null → 恢复后还要再等 60s）。 // v35：bosc web 端口裸 ded[0][0] 崩溃守卫——增量(since)空序列或 geo 拦截返回空时干净 return null，不再 TypeError 强制回落中国理财网(及其 503 风险)；同批 xpl 净值查询 503 作废会话重试一次(绕同会话连续调用限流) // v34：份额码桥接冗余短路——解析出份额码===渠道码时跳过发行行③重查(省~1.5s)；新增 SHARE_EQ_CHANNEL 白名单(WPBK24M0501T)使 ② 名检索 0ms // v33：nav 响应新增 registryCode/navShare 透传；补录光大 D 份额 XPL_SHARE_REG（EW6729D/EW7829D）跳过份额码桥接 // v32：404「未抓到」响应**带上 timings 时间分解**（即便 nav/info 全空也回传已采集的分阶段耗时，前端不再一片空白，便于定位哪条链没跑通）；另修复「缺 issuer 时仅凭 manager 推导发行行」使网商代销品(agent=mybank、注册表仅含 manager)线上也能路由到发行方端口——此前线上 Worker 缺该推导、baseBanks 为空直奔中国理财网又因无产品名查不到 → 404 无 timings；v31：**招银理财官网(cmbwm)日期口径修正为北京时间**——官网 navDate 原始毫秒时间戳是「北京时间当日零点」（如 2026-10-29 零点 = 2026-10-28T16:00:00Z），旧实现用 toISOString() 取 UTC 日期 → 整体早一天（实测 132112D 末点标 10-28、实际 10-29）。三重独立源交叉验证：官网标签+1天 vs 中国理财网 117/117 完全一致、vs 招行超市 CSV 112/112 一致、vs 本地 cgb/app 46/46 一致；且旧标签的星期分布「周五 0 个」是日期错位的铁证。另①增量模式 0 新增点不再当失败丢弃（本地 404 的第二重原因）②命中 cmbwm 后跳过份额码桥接（cmb 腿不认 shareCode，桥接=白跑一次无头 Chrome，多烧 12.5s）③cmb 发行腿预算 3s→26s（cmbwm 走无头 Chrome+SM2 加密，冷启动 15~25s，3s 会整条掐断）④前端新增 cmb/cmbwm→「招银理财官网」标签映射；v30：招银理财官网腿加**总预算**（CMBWM_TIMEOUT_MS=45s，页面就绪总时限 40s）——该腿要走无头 Chrome(SM2 加密)，冷启动 20~40s，不封顶会单腿烧光编排层 60s 前端预算（实测本地「抓取失败 60.0s / 时间分解无子项」）；现超预算快速失败，编排层继续走其它腿；v29：新增招银理财官网端口（cmbwm，www.cmbchinawm.com）——cfweb 超市腿对**已下架**产品返空（实测 132112D/MS/N 三兄弟份额 body=0、PB132112D 代销码也空）→这类产品抓不到；而招银理财官网作为发行方信披渠道，下架后仍保留历史净值与详情（用户实证 132112D 官网可见净值），实测本机 1.1s 拿到 118 点(末点 2026-10-28/1.0177，与官网一致)、三兄弟份额净值各不相同(D=1.0177/N=1.0173/MS=1.0178，份额族护栏有效)。该端口必须走无头 Chrome：请求体 SM2 加密(vm.SmAencrypt，公钥与算法在 660KB 混淆 bundle 里)，且 /web/api/* 有地域封禁须走 /prod-api 前缀 → 见 scrape/cmbwm_app.mjs；Cloudflare Workers 无 Chrome 故线上恒返 null（走原有 cfweb/xpl 链）。v28：中国理财网**旧站**(wechatSearch/cwReq)独立熔断——与 xpl 新站是两套风控，旧站握手超时(25s)同样白等；现握手失败即记熔断，后续旧站名检索秒返；v27：中国理财网(xpl)熔断补全到 xplNameToReg/xplProductDetail 两条旁路——它们直接调 xplInit 握手、不走 xplFetch，故首笔仍白等 20s+（截图里「份额码桥接 21.3s」即此）；现握手失败即记熔断，后续名检索/详情直查全部秒返；v26：广发(cgb)三腿加「本机不可达熔断」——本机 IP 被封时(广发主站 403 静态拦截页；wap.cgbchina.com.cn 与 www.cgbwmc.com.cn TCP 层不通；中国理财网握手被风控)三腿各自白等 20s+6s+42s，单只产品 50s 爆掉前端 60s 预算 → 全部「未抓到」；现①广发 App 会话超时(6s短探测)→熔断10分钟②广银理财官网探针超时→熔断10分钟(区分「超时」与「查无此产品」，后者不熔断)③中国理财网握手失败→熔断10分钟；成功即自动清零恢复。另登记招银理财招睿添利日开21号兄弟份额 132112D/N/MS → Z7001626000062（三者净值各不相同，实测 D=1.0177/N=1.0173/MS=1.0178）；v25：宁银(nbcb) nav 模式新增 App 腿(aapw 移动端网关 newFinaChart.do)——宁银理财官网只收录自营产品，跨行代销品(667468WS 招银理财代销/用户手机 H5 可见净值)官网腿恒 null→整条腿失败→回落中国理财网(本机 IP 风控→42s 超时)→抓不到；新腿支持增量(startIssDate 下推 since+1 + 客户端 d>since 双保险)，0 新增点用 detail 做存在性判定(=已在架=已是最新，算成功带 navIncremental)；v24：中国理财网家族（份额码名检索+净值兜底）加**总预算**（锚 T0+50s）——本机 IP 被风控时两段串起来 64s>前端 60s 预算→前端掐断→时间分解全空；且 XPL_SHARE_REG 已登记的码**跳过名检索**直接用登记份额码（省 21s 白等）；v23：单点采纳排除 BANK_ONE_NAV（网商/微银等只回单点的银行必须继续走中国理财网兜底，其单点无历史价值）；v22：增量模式下银行腿跑通但只回单点时也采纳（navLegOkCtx）——官网历史净值接口被 WAF 拦时只剩详情里的最新净值（真实单位净值，按日期并集不丢历史），不放行会被拒→触发 20s+份额码桥接+40s中国理财网兜底→拖满 60s 前端预算→「抓取失败」（实测交银 5811221111：本地 63s 未抓到/线上 1.7s 拿到）；全量模式不放行（单点会顶掉完整历史）；单点值≈1 不放行（防误判现金类）；v21：修复招行(cm b→cmb)增量腿漏返回 navIncremental —— 增量腿只回 0~1 个新增点时被 navLegOk 拒 → 回落中国理财网全量兜底（14~46s、来源被改写为 chinawealth），前端又因 nav.navIncremental 缺失把「0 新增点」判成「未抓到」（招行 5 只全未抓到）；带上后：接口跑通即放行，0 新增点=「已是最新」（前端判成功、历史不丢）。v20：建信理财纳入 FAST_WEB_NAV_BANKS；
+const CACHE_VERSION = "v38"; // v38：**线上 /api/predict 启用**——RULES_JSON_URL 由空串改为 https://lclist.github.io/predict-rules.json（仓库根 predict-rules.json，与本地 predict_bank.js 同一份 v4 规则）。此前线上 /api/predict 恒返 503「predict unavailable」→ 前端回退「仅查下拉框单家」，与本地「预判发行行→下拉框代销行→预判其它发行行→预判其它代销行→剩余行」的有序多银行尝试不一致；现两端口径统一。规则 JSON 用 ASCII 文件名以避开中文路径的百分号编码差异。  // v37：**份额码桥接改为「码优先」** —— 原实现只按产品名检索信披平台取份额码，且打分把「名称完全相同(90)」排在「代码数字体一致(80)」之前；工银·鑫悦打新策略优选最短持有90天混合类开放在平台上有 **4 个同名产品**（subShare 26H6066A/26H6399F/26H6055C/26H6060H，净值各异），名检索可能命中**另一个产品**的份额码 → 拿它去工行官网查 → 把别的产品净值当本产品入库，来源还显示「工商银行官网」（比抓不到更坏）。现三层修复：① 份额码桥接**优先按登记编码**取本产品的份额族（xplRegToShareFamily，全程不碰产品名）；② 名检索剔除「同形不同数」的异产品行（xplForeignCode：字母骨架折叠重复字母后相同、而数字体不同 ⇒ 必属不同产品；同一产品的各份额码数字体恒相同）；③ 推导出的份额码再过一遍同形校验，不合则拒绝采用。  // v36：中国理财网(xpl)熔断器根治——原实现「模块级全局熔断 + 单次握手失败即熔 10 分钟 + 窗口内绝不做试探」，而 XPL_CIRCUIT 在 Cloudflare Workers 里是**同一 isolate 内所有请求共享**的模块级变量 → 任何一次握手抖动都会让该 isolate 上随后 10 分钟内所有产品的中国理财网兜底全部 0ms 秒返 null → 全站该通道集体「未抓到」（实测 5 个互不相关产品同时 404、兜底阶段均 0ms null）。现改为：①按请求计数（xplFetch 内部 2 次 attempt 只算 1 次失败）+ 连续失败 ≥2 次才熔断；②窗口分级递增(30s→60s→…→10min)；③窗口内每 20s 放行单个半开探测，上游恢复即全站立即恢复；④握手失败不写负缓存（原实现对「握手失败」与「查无此产品」一律写 60s null → 恢复后还要再等 60s）。 // v35：bosc web 端口裸 ded[0][0] 崩溃守卫——增量(since)空序列或 geo 拦截返回空时干净 return null，不再 TypeError 强制回落中国理财网(及其 503 风险)；同批 xpl 净值查询 503 作废会话重试一次(绕同会话连续调用限流) // v34：份额码桥接冗余短路——解析出份额码===渠道码时跳过发行行③重查(省~1.5s)；新增 SHARE_EQ_CHANNEL 白名单(WPBK24M0501T)使 ② 名检索 0ms // v33：nav 响应新增 regCode/navShare 透传；补录光大 D 份额 XPL_SHARE_REG（EW6729D/EW7829D）跳过份额码桥接 // v32：404「未抓到」响应**带上 timings 时间分解**（即便 nav/info 全空也回传已采集的分阶段耗时，前端不再一片空白，便于定位哪条链没跑通）；另修复「缺 issuer 时仅凭 manager 推导发行行」使网商代销品(agent=mybank、注册表仅含 manager)线上也能路由到发行方端口——此前线上 Worker 缺该推导、baseBanks 为空直奔中国理财网又因无产品名查不到 → 404 无 timings；v31：**招银理财官网(cmbwm)日期口径修正为北京时间**——官网 navDate 原始毫秒时间戳是「北京时间当日零点」（如 2026-10-29 零点 = 2026-10-28T16:00:00Z），旧实现用 toISOString() 取 UTC 日期 → 整体早一天（实测 132112D 末点标 10-28、实际 10-29）。三重独立源交叉验证：官网标签+1天 vs 中国理财网 117/117 完全一致、vs 招行超市 CSV 112/112 一致、vs 本地 cgb/app 46/46 一致；且旧标签的星期分布「周五 0 个」是日期错位的铁证。另①增量模式 0 新增点不再当失败丢弃（本地 404 的第二重原因）②命中 cmbwm 后跳过份额码桥接（cmb 腿不认 shareCode，桥接=白跑一次无头 Chrome，多烧 12.5s）③cmb 发行腿预算 3s→26s（cmbwm 走无头 Chrome+SM2 加密，冷启动 15~25s，3s 会整条掐断）④前端新增 cmb/cmbwm→「招银理财官网」标签映射；v30：招银理财官网腿加**总预算**（CMBWM_TIMEOUT_MS=45s，页面就绪总时限 40s）——该腿要走无头 Chrome(SM2 加密)，冷启动 20~40s，不封顶会单腿烧光编排层 60s 前端预算（实测本地「抓取失败 60.0s / 时间分解无子项」）；现超预算快速失败，编排层继续走其它腿；v29：新增招银理财官网端口（cmbwm，www.cmbchinawm.com）——cfweb 超市腿对**已下架**产品返空（实测 132112D/MS/N 三兄弟份额 body=0、PB132112D 代销码也空）→这类产品抓不到；而招银理财官网作为发行方信披渠道，下架后仍保留历史净值与详情（用户实证 132112D 官网可见净值），实测本机 1.1s 拿到 118 点(末点 2026-10-28/1.0177，与官网一致)、三兄弟份额净值各不相同(D=1.0177/N=1.0173/MS=1.0178，份额族护栏有效)。该端口必须走无头 Chrome：请求体 SM2 加密(vm.SmAencrypt，公钥与算法在 660KB 混淆 bundle 里)，且 /web/api/* 有地域封禁须走 /prod-api 前缀 → 见 scrape/cmbwm_app.mjs；Cloudflare Workers 无 Chrome 故线上恒返 null（走原有 cfweb/xpl 链）。v28：中国理财网**旧站**(wechatSearch/cwReq)独立熔断——与 xpl 新站是两套风控，旧站握手超时(25s)同样白等；现握手失败即记熔断，后续旧站名检索秒返；v27：中国理财网(xpl)熔断补全到 xplNameToReg/xplProductDetail 两条旁路——它们直接调 xplInit 握手、不走 xplFetch，故首笔仍白等 20s+（截图里「份额码桥接 21.3s」即此）；现握手失败即记熔断，后续名检索/详情直查全部秒返；v26：广发(cgb)三腿加「本机不可达熔断」——本机 IP 被封时(广发主站 403 静态拦截页；wap.cgbchina.com.cn 与 www.cgbwmc.com.cn TCP 层不通；中国理财网握手被风控)三腿各自白等 20s+6s+42s，单只产品 50s 爆掉前端 60s 预算 → 全部「未抓到」；现①广发 App 会话超时(6s短探测)→熔断10分钟②广银理财官网探针超时→熔断10分钟(区分「超时」与「查无此产品」，后者不熔断)③中国理财网握手失败→熔断10分钟；成功即自动清零恢复。另登记招银理财招睿添利日开21号兄弟份额 132112D/N/MS → Z7001626000062（三者净值各不相同，实测 D=1.0177/N=1.0173/MS=1.0178）；v25：宁银(nbcb) nav 模式新增 App 腿(aapw 移动端网关 newFinaChart.do)——宁银理财官网只收录自营产品，跨行代销品(667468WS 招银理财代销/用户手机 H5 可见净值)官网腿恒 null→整条腿失败→回落中国理财网(本机 IP 风控→42s 超时)→抓不到；新腿支持增量(startIssDate 下推 since+1 + 客户端 d>since 双保险)，0 新增点用 detail 做存在性判定(=已在架=已是最新，算成功带 navIncremental)；v24：中国理财网家族（份额码名检索+净值兜底）加**总预算**（锚 T0+50s）——本机 IP 被风控时两段串起来 64s>前端 60s 预算→前端掐断→时间分解全空；且 XPL_SHARE_REG 已登记的码**跳过名检索**直接用登记份额码（省 21s 白等）；v23：单点采纳排除 BANK_ONE_NAV（网商/微银等只回单点的银行必须继续走中国理财网兜底，其单点无历史价值）；v22：增量模式下银行腿跑通但只回单点时也采纳（navLegOkCtx）——官网历史净值接口被 WAF 拦时只剩详情里的最新净值（真实单位净值，按日期并集不丢历史），不放行会被拒→触发 20s+份额码桥接+40s中国理财网兜底→拖满 60s 前端预算→「抓取失败」（实测交银 5811221111：本地 63s 未抓到/线上 1.7s 拿到）；全量模式不放行（单点会顶掉完整历史）；单点值≈1 不放行（防误判现金类）；v21：修复招行(cm b→cmb)增量腿漏返回 navIncremental —— 增量腿只回 0~1 个新增点时被 navLegOk 拒 → 回落中国理财网全量兜底（14~46s、来源被改写为 chinawealth），前端又因 nav.navIncremental 缺失把「0 新增点」判成「未抓到」（招行 5 只全未抓到）；带上后：接口跑通即放行，0 新增点=「已是最新」（前端判成功、历史不丢）。v20：建信理财纳入 FAST_WEB_NAV_BANKS；
 
 /* 分页参数 —— 这两个值是被 Cloudflare Workers 的「子请求配额」倒推出来的，别随手调大。
  *
@@ -1029,7 +1029,7 @@ export async function icbcLive(code, opts = {}) {
  *   PsnxWmpProductDetailQueryOutlay 产品详情（★核心）。**必须带 isNewVersion:"Y"**：
  *     这是手机银行 bocFinanceDetail 页面用的那一版；缺该字段服务端直接回 result:{}（0 键），
  *     旧实现的「额度/最短持有恒 null」即栽在此处。带上后一次回 211 个字段：
- *       productName / managerCode / managerName / riskLevel / registryCode /
+ *       productName / managerCode / managerName / riskLevel / regCode /
  *       establishDate / periodTerm / dayPerPeriod / dayPerPeriodWord /
  *       benchmarkWord(业绩基准原文) / productSize(存续规模) / indiAmtRem /
  *       subPosUp(个人持仓上限) / purPosUp(单日申购上限) / saleState / productState /
@@ -1158,7 +1158,7 @@ function bocUpstreamError(r, stage) {
 /**
  * 取中行产品的概要 + 完整净值序列。
  * 返回与 icbcLive 完全一致的契约：{name, manager, established, series, kind, source:"live"}，
- * 并额外携带 risk / registryCode / benchmark（中行免费提供，前端可直接用，省去元数据补抓）。
+ * 并额外携带 risk / regCode / benchmark（中行免费提供，前端可直接用，省去元数据补抓）。
  *
  * 判定：
  *   bocPost 拿不到合法 JSON → 上游网络失败/被拦截，抛 upstream 异常（入口转 502，
@@ -1203,7 +1203,7 @@ export async function bocFetch(code, opts = {}) {
   // ── 详情（App 端口版）：isNewVersion:"Y" 是手机银行 bocFinanceDetail 页面用的那一版，
   //    实测缺这个字段服务端直接回 result:{}（0 个键）——旧实现里「额度/最短持有恒 null」
   //    就是栽在这里，而不是产品没披露。带上它一次回 211 个字段：
-  //      registryCode(登记编码) / riskLevel(R2) / establishDate(成立日) /
+  //      regCode(登记编码) / riskLevel(R2) / establishDate(成立日) /
   //      periodTerm+dayPerPeriod(最短持有期) / benchmarkWord(业绩比较基准原文) /
   //      managerName(管理人) / productSize(存续规模) / subPosUp+purPosUp(申购上限) / newYield。
   //    因此详情优先，概要只作缺失项兜底。
@@ -1222,13 +1222,13 @@ export async function bocFetch(code, opts = {}) {
   }
 
   let name = det ? (det.productName || "") : "";
-  let registryCode = det ? (det.registryCode || null) : null;
+  let regCode = det ? (det.regCode || null) : null;
   let riskRaw = det ? (det.riskLevel || null) : null; // 已是 R2 这类规范档
   let benchmark = det ? (det.benchmarkWord || null) : null;
 
   // 概要兜底（+ 业绩基准的第二来源）。四项都已齐全时不再打这一枪。
   let rs = {};
-  const needSummary = !name || !registryCode || !riskRaw || !benchmark;
+  const needSummary = !name || !regCode || !riskRaw || !benchmark;
   if (!__navMode && !__quotaMode && needSummary && !(opts.summaryComplete && (opts.sRegCode || opts.sRisk || opts.sBenchmark || opts.sName))) {
     const summary = await bocPost("PsnxWmpProductSummaryQueryOutlay", { productId: code, subChannelId: sub }, transport, sink);
     if (!summary.json) {
@@ -1237,14 +1237,14 @@ export async function bocFetch(code, opts = {}) {
     } else {
       rs = summary.json.result || {};
       name = name || rs.productShortName || rs.productLongName || "";
-      registryCode = registryCode || rs.debtRegistrationCode || null;
+      regCode = regCode || rs.debtRegistrationCode || null;
       riskRaw = riskRaw || rs.customerRiskLevels || null;
       benchmark = benchmark || rs.performanceBenchmark || null;
     }
   }
   if (opts.summaryComplete) {
     name = name || opts.sName || "";
-    registryCode = registryCode || opts.sRegCode || null;
+    regCode = regCode || opts.sRegCode || null;
     riskRaw = riskRaw || opts.sRisk || null;
     benchmark = benchmark || opts.sBenchmark || null;
   }
@@ -1355,7 +1355,7 @@ export async function bocFetch(code, opts = {}) {
     // 风险：详情给的是 R2 这种规范档，概要给的是 "C2,C3" 区间码，两种都接。
     risk: /^R[1-9]$/.test(String(riskRaw)) ? String(riskRaw)
       : (opts.summaryComplete && opts.sRisk ? opts.sRisk : bocRiskFromLevels(riskRaw)),
-    registryCode: registryCode || null,
+    regCode: regCode || null,
     benchmark: benchmark || null,
     source: "live",
     // 与平安一致，返回完整额度对象以匹配 fetchProductFull 第4步与前端 MULTI_REAL 持久化结构。
@@ -1641,7 +1641,7 @@ async function psbcwmRows(code, transport, since) {
  * @param {string} code 产品代码
  * @param {{transport?:Function, infoOnly?:boolean}} opts
  *   infoOnly=true 只取产品信息（search + bjjz），**不拉 nvlist 净值序列**（刷信息模式用）。
- * @returns {Promise<null|{name,manager,established,series,kind,risk,benchmark,holdDays,registryCode,...}>}
+ * @returns {Promise<null|{name,manager,established,series,kind,risk,benchmark,holdDays,regCode,...}>}
  */
 export async function psbcwmFetch(code, opts = {}) {
   const c = String(code || "").trim().toUpperCase();
@@ -1660,7 +1660,7 @@ export async function psbcwmFetch(code, opts = {}) {
     return null;
   }
   const name = it.wp_name || null;
-  const registryCode = it.wp_registration_code || null;
+  const regCode = it.wp_registration_code || null;
   const risk = /^[1-5]$/.test(String(it.prd_risk_rate || "")) ? "R" + String(it.prd_risk_rate) : null;
   const established = psbcwmYmd(it.wp_establish_date);
   // 基准：优先 bjjz 接口（与官网详情页同源、全文），失败退回 search 里的 performance_comparison
@@ -1706,7 +1706,7 @@ export async function psbcwmFetch(code, opts = {}) {
     }
   }
 
-  navLog("psbcwm code=" + c + " -> name=" + (name || "-") + " reg=" + (registryCode || "-") +
+  navLog("psbcwm code=" + c + " -> name=" + (name || "-") + " reg=" + (regCode || "-") +
     " n=" + series.length + " last=" + (series.length ? series[series.length - 1][0] : "-") +
     " (" + (Date.now() - t0) + "ms)");
 
@@ -1721,7 +1721,7 @@ export async function psbcwmFetch(code, opts = {}) {
     risk,
     benchmark,
     holdDays: null, // 官网无「最短持有天数」字段，由母行详情/名称解析补
-    registryCode,
+    regCode,
     source: "live",
     bank: "psbc",
     navVia: "psbcwm",
@@ -1804,7 +1804,7 @@ export async function psbcFetch(code, opts = {}) {
       risk: wm.risk || riskFromPd,
       benchmark,
       holdDays,
-      registryCode: wm.registryCode || null,
+      regCode: wm.regCode || null,
       source: "live",
       bank: "psbc",
       navVia: "psbcwm",
@@ -1833,7 +1833,7 @@ export async function psbcFetch(code, opts = {}) {
       risk: (wm && wm.risk) || riskFromPd,
       benchmark,
       holdDays,
-      registryCode: (wm && wm.registryCode) || null,
+      regCode: (wm && wm.regCode) || null,
       source: "live",
       bank: "psbc",
       navPort: "web",
@@ -1855,7 +1855,7 @@ export async function psbcFetch(code, opts = {}) {
       risk: riskFromPd,
       benchmark: (pd && pd.ggms) || null,
       holdDays,
-      registryCode: null,
+      regCode: null,
       source: "live",
       bank: "psbc",
       navPort: "app", // 额度只出母行微信 H5（官网无剩余额度字段）
@@ -1893,7 +1893,7 @@ export async function psbcFetch(code, opts = {}) {
     kind: "nav", // 现金管理类已排除，走到这里的都是单位净值型固收产品
     risk: riskFromPd || (wm && wm.risk) || null,
     benchmark,
-    registryCode: (wm && wm.registryCode) || null, // 母行接口不返回登记编码，官网有则带上
+    regCode: (wm && wm.regCode) || null, // 母行接口不返回登记编码，官网有则带上
     holdDays,
     source: "live",
     navPort: "app", // 母行微信 H5 端口（官网未收录该代码时唯一净值来源）
@@ -2406,7 +2406,7 @@ export async function fetchMeta(bank, code, transport) {
         // 故不再打 _cwEstablished 标记、不再让中国理财网覆盖成立日。
         established: r.established || null,
         holdDays: r.holdDays != null ? r.holdDays : null,
-        regCode: r.registryCode || null,
+        regCode: r.regCode || null,
         name: r.name || null,
         manager: r.manager || null,
         benchmark: r.benchmark || null,
@@ -2418,7 +2418,7 @@ export async function fetchMeta(bank, code, transport) {
         risk: r.risk || null,
         established: r.established || null,
         holdDays: r.holdDays != null ? r.holdDays : null,
-        regCode: r.registryCode || null,
+        regCode: r.regCode || null,
         name: r.name || null,
         manager: r.manager || null,
         benchmark: r.benchmark || null,
@@ -2455,7 +2455,7 @@ export async function fetchMeta(bank, code, transport) {
         risk: r.risk || null,
         established: r.established || null,
         holdDays: r.holdDays != null ? r.holdDays : null,
-        regCode: r.registryCode || null,
+        regCode: r.regCode || null,
         name: r.name || null,
         manager: r.manager || null,
         benchmark: r.benchmark || null,
@@ -2468,7 +2468,7 @@ export async function fetchMeta(bank, code, transport) {
         risk: r.risk || null,
         established: r.established || null,
         holdDays: r.holdDays != null ? r.holdDays : null,
-        regCode: r.registryCode || null,
+        regCode: r.regCode || null,
         name: r.name || null,
         manager: r.manager || null,
         benchmark: r.benchmark || null,
@@ -2481,7 +2481,7 @@ export async function fetchMeta(bank, code, transport) {
         risk: r.risk || null,
         established: r.established || null,
         holdDays: r.holdDays != null ? r.holdDays : null,
-        regCode: r.registryCode || null,
+        regCode: r.regCode || null,
         name: r.name || null,
         manager: r.manager || null,
         benchmark: r.benchmark || null,
@@ -2494,7 +2494,7 @@ export async function fetchMeta(bank, code, transport) {
         risk: r.risk || null,
         established: r.established || null,
         holdDays: r.holdDays != null ? r.holdDays : null,
-        regCode: r.registryCode || null,
+        regCode: r.regCode || null,
         name: r.name || null,
         manager: r.manager || null,
         benchmark: r.benchmark || null,
@@ -2508,7 +2508,7 @@ export async function fetchMeta(bank, code, transport) {
         risk: r.risk || null,
         established: r.established || null,
         holdDays: r.holdDays != null ? r.holdDays : null,
-        regCode: r.registryCode || null,
+        regCode: r.regCode || null,
         name: r.name,
         manager: r.manager || null,
         benchmark: r.benchmark || null,
@@ -2555,7 +2555,7 @@ export async function fetchMeta(bank, code, transport) {
         risk: r.risk || null,
         established: r.established || null,
         holdDays: r.holdDays != null ? r.holdDays : null,
-        regCode: r.registryCode || null,
+        regCode: r.regCode || null,
         name: r.name || null,
         manager: r.manager || null,
         benchmark: r.benchmark || null,
@@ -2569,7 +2569,7 @@ export async function fetchMeta(bank, code, transport) {
         risk: r.risk || null,
         established: r.established || null,
         holdDays: r.holdDays != null ? r.holdDays : null,
-        regCode: r.registryCode || null,
+        regCode: r.regCode || null,
         name: r.name || null,
         manager: r.manager || null,
         benchmark: r.benchmark || null,
@@ -2595,7 +2595,7 @@ export async function fetchMeta(bank, code, transport) {
           risk: live.risk || null,
           established: live.established || null,
           holdDays: live.holdDays != null ? live.holdDays : null,
-          regCode: live.registryCode || null,
+          regCode: live.regCode || null,
           name: live.name || null,
           manager: live.manager || null,
           benchmark: live.benchmark || null,
@@ -2709,7 +2709,7 @@ async function fetchFromBank(bank, code, opts = {}) {
 // ==========================================================================
 // 新统一抓取编排（2026-10-10 重构）
 //   净值：发行银行(全历史) → 代销银行(全历史) → 中国理财网(xinxipilu 信息披露平台)兜底
-//   产品信息(最短持有天数/风险等级/成立日期)：直连银行已回 registryCode+risk 则跳过中国理财网；
+//   产品信息(最短持有天数/风险等级/成立日期)：直连银行已回 regCode+risk 则跳过中国理财网；
 //       否则(建行/兴业/广发/民生/农行/中信等不回风险等级，或 chinawealth/xpl 主源)仍走中国理财网兜底
 //   业绩比较基准：发行银行 → 代销银行
 //   额度：发行银行 → 代销银行（目前仅平安银行实现）
@@ -2801,11 +2801,11 @@ async function safeBank(bank, code, transport, label, sink, extra) {
 }
 
 // 中国理财网净值兜底：先拿到登记编码(regCode)，再走 xplFetch 抓全量历史净值。
-// 登记编码来源优先级：① 银行直连已回的 registryCode；② 用银行回的产品名称在
+// 登记编码来源优先级：① 银行直连已回的 regCode；② 用银行回的产品名称在
 // 中国理财网按名称定位取到 prodRegCode；③ 调用方直接给的 opts.regCode。
 async function chinawealthNav(code, { regCode, name, transport, sink, shareCode } = {}) {
   // 登记编码来源优先级（2026-10-16 调整）：
-  //   ① 调用方直接给的 opts.regCode（银行直连已回的 registryCode 由上层传入）；
+  //   ① 调用方直接给的 opts.regCode（银行直连已回的 regCode 由上层传入）；
   //   ② XPL_SHARE_REG 已登记的渠道份额码映射——这是**人工核对过**的确定性映射，必须先于
   //      任何名称检索：可省掉一次搜索，也避免搜索失败时在时间分解里落下误导性的红色「未抓到」；
   //   ③ 信披平台 getProductList 按名称检索（2026-10-16 新增）——与旧站 wechatSearch 两套
@@ -2995,7 +2995,7 @@ const BANK_PORTS = {
   //   中国银行 = App 端口 bocFinanceDetail 手机银行 H5（isNewVersion:"Y" → 211 字段，2026-10-17 打通）
   //             / web 官网同网关概要版（无详情字段）
   //   交通银行 = App 端口 mbank.95559.com.cn 手机银行网关 PRDAFD0007/0002（全量净值+七字段，
-  //             净值比 web 新一天；须登记 registerCode 份额码，2026-10-17 打通）
+  //             净值比 web 新一天；须登记 shareCode 份额码，2026-10-17 打通）
   //             / web 交银理财官网 bocommwm.com（登记编码 Z7…+成立日+净值序列）
   icbc: ["app", "web"],
   nbcb: ["app", "web"],
@@ -3066,7 +3066,7 @@ function bankInfoScore(r) {
   if (!r) return 0;
   let s = 0;
   if (r.name) s++;
-  if (r.registryCode || r.regCode) s++;
+  if (r.regCode || r.regCode) s++;
   if (r.risk) s++;
   if (r.benchmark) s++;
   if (r.holdDays != null) s++;
@@ -3562,7 +3562,7 @@ export async function fetchProductFull(code, opts = {}) {
   }
   // 中国理财网兜底净值：仅 nav / all 模式需要（info / quota 模式不抓净值）
   if ((mode === "nav" || mode === "all") && !nav) {
-    const reg = (bankInfo && bankInfo.registryCode) || opts.regCode || null;
+    const reg = (bankInfo && bankInfo.regCode) || opts.regCode || null;
     const nm = (bankInfo && bankInfo.name) || opts.name || null;
     // 【2026-10-25 新增】渠道码 → 发行方份额码桥接（代销他行理财子产品的通用解法）。
     // 触发条件：本渠道按渠道码已抓空（走到这里即如此），且调用方未显式给份额码。
@@ -3605,7 +3605,7 @@ export async function fetchProductFull(code, opts = {}) {
         if (!bankInfo) bankInfo = r;
         else {
           if (bankInfo.holdDays == null && r.holdDays != null) bankInfo.holdDays = r.holdDays;
-          if (!bankInfo.registryCode && r.registryCode) bankInfo.registryCode = r.registryCode;
+          if (!bankInfo.regCode && r.regCode) bankInfo.regCode = r.regCode;
         }
         navLog("name-lookup 发行行 " + issuer + " 按名命中 " + r.series.length + " 点 (" + (Date.now() - nT0) + "ms) name=" + lookupName);
         if (reused) navTiming(timings, "1y.净值·" + issuer + "(按名·复用)", Date.now() - nT0, "hit series=" + r.series.length);
@@ -3667,8 +3667,8 @@ export async function fetchProductFull(code, opts = {}) {
             const sbT0 = Date.now();
             // 【2026-11-01】把登记编码透进份额码桥接：优先按**登记编码**取本产品的份额族
             //   （不碰产品名 → 天然排除同名不同码的其它产品）。regCode 来源：调用方透传
-            //   （前端已持久化）+ 代销行回传的 registryCode。
-            const _reg0 = String(opts.regCode || (bankInfo && bankInfo.registryCode) || "").trim().toUpperCase();
+            //   （前端已持久化）+ 代销行回传的 regCode。
+            const _reg0 = String(opts.regCode || (bankInfo && bankInfo.regCode) || "").trim().toUpperCase();
             shareHint = await cwChainRace(resolveChannelShare(c, lookupName, transport, timings, _reg0).catch(() => null));
             if (shareHint) navLog("share-bridge " + c + " -> " + shareHint + " (" + (Date.now() - sbT0) + "ms)");
           }
@@ -3708,7 +3708,7 @@ export async function fetchProductFull(code, opts = {}) {
         if (!bankInfo) bankInfo = r;
         else {
           if (bankInfo.holdDays == null && r.holdDays != null) bankInfo.holdDays = r.holdDays;
-          if (!bankInfo.registryCode && r.registryCode) bankInfo.registryCode = r.registryCode;
+          if (!bankInfo.regCode && r.regCode) bankInfo.regCode = r.regCode;
         }
         navLog("share-bridge 发行行 " + issuer + " 按份额码 " + shareHint + " 命中 " + r.series.length + " 点 (" + (Date.now() - rT0) + "ms)");
       } else {
@@ -3767,8 +3767,8 @@ export async function fetchProductFull(code, opts = {}) {
       " 尾部相邻=" + tailPair + " 间隔=" + gap + "天 最新点近7天=" + recent +
       " => " + (willFillFinal ? "触发补缺" : "跳过(条件不满足)"));
     if (willFillFinal) {
-      // XPL_SHARE_REG 兜底：icbc 等银行不回 registryCode，且 serve.mjs 未转发 regCode 时仍能命中中国理财网
-      const gapReg = (bankInfo && bankInfo.registryCode) || opts.regCode || XPL_SHARE_REG[c] || null;
+      // XPL_SHARE_REG 兜底：icbc 等银行不回 regCode，且 serve.mjs 未转发 regCode 时仍能命中中国理财网
+      const gapReg = (bankInfo && bankInfo.regCode) || opts.regCode || XPL_SHARE_REG[c] || null;
       const gapName = (bankInfo && bankInfo.name) || opts.name || null;
       console.log("[gapfill-debug] " + c + " 补缺用 regCode=" + (gapReg || "-") + " name=" + (gapName || "-"));
       const cwT0 = Date.now();
@@ -3791,19 +3791,19 @@ export async function fetchProductFull(code, opts = {}) {
   }
 
   // —— 2. 产品信息（最短持有天数/风险等级/成立日期/登记编码）——
-  // 2026-10-16：regCode 兜底顺序 = 银行直连 registryCode → 调用方 opts.regCode →
+  // 2026-10-16：regCode 兜底顺序 = 银行直连 regCode → 调用方 opts.regCode →
   //   XPL_SHARE_REG 按产品码直查（已补录的份额映射）→ 都缺才走中国理财网按名检索。
   //   按名检索会把名称相近的不同产品错配（聚宝盈60天2号 曾错挂 1 号的登记 Z7001026001429），
   //   故已补录的码一律走直查，名检索只作最后手段。
   let info = null, benchmark = null;
   if (mode === "info" || mode === "all") {
-  const regCode = (bankInfo && bankInfo.registryCode) || opts.regCode || XPL_SHARE_REG[String(c || "").trim().toUpperCase()] || null;
+  const regCode = (bankInfo && bankInfo.regCode) || opts.regCode || XPL_SHARE_REG[String(c || "").trim().toUpperCase()] || null;
   const pname = (bankInfo && bankInfo.name) || opts.name || (nav && nav.name) || null;
   // infoComplete：前端标记本产品四项信息已补全过 → 跳过中国理财网重抓（spec「只抓一次」保证，
   // 见前端 observer_info_complete）。fullInfo（详情页强制）会否决它，确保仍可手动补一次。
   const infoComplete = !!opts.infoComplete && !fullInfo;
   const infoT0 = Date.now();
-  const bankReg = !!(bankInfo && bankInfo.registryCode);
+  const bankReg = !!(bankInfo && bankInfo.regCode);
   const bankRisk = !!(bankInfo && bankInfo.risk);
   const bankEst = !!(bankInfo && bankInfo.established);
   const bankHold = !!(bankInfo && bankInfo.holdDays != null);
@@ -3813,7 +3813,7 @@ export async function fetchProductFull(code, opts = {}) {
       risk: (bankInfo && bankInfo.risk) || null,
       established: (bankInfo && bankInfo.established) || null,
       holdDays: null,
-      regCode: (bankInfo && bankInfo.registryCode) || null,
+      regCode: (bankInfo && bankInfo.regCode) || null,
       name: (bankInfo && bankInfo.name) || null,
       manager: (bankInfo && bankInfo.manager) || null,
       source: navVia || null,
@@ -3821,7 +3821,7 @@ export async function fetchProductFull(code, opts = {}) {
     navTiming(timings, "2.信息·已补全(跳过中国理财网)", Date.now() - infoT0, "reg=" + (info.regCode || "-") + " 四项已齐→本轮不重抓");
   } else if (bankReg && bankRisk && bankEst && bankHold) {
     // 直连银行一次性回齐四项（极少见）→ 跳过中国理财网
-    info = { risk: bankInfo.risk, established: bankInfo.established, holdDays: bankInfo.holdDays, regCode: bankInfo.registryCode, name: bankInfo.name, manager: bankInfo.manager, source: navVia };
+    info = { risk: bankInfo.risk, established: bankInfo.established, holdDays: bankInfo.holdDays, regCode: bankInfo.regCode, name: bankInfo.name, manager: bankInfo.manager, source: navVia };
     navTiming(timings, "2.信息·直连(跳过中国理财网)", Date.now() - infoT0, "四项齐全");
   } else {
     // 缺任意一项 → 中国理财网补全（优先 xinxipilu 按登记编码直查，避开旧站 wechatSearch 的 429 高发；
@@ -4063,7 +4063,7 @@ export async function fetchProductFull(code, opts = {}) {
     isCash: isCash || undefined,              // 银行直连识别到现金管理类（OPEN_TYPE=6/XJL 等）→ 前端从源头拦截
     navVia: retNav ? navVia : null,           // 净值实际来源：发行银行key / 代销银行key / "chinawealth"
     navPort: retNav ? navPort : null,         // 实际命中端口：app / web / null(中国理财网)；配合 navVia 前端渲染「银行+端口」
-    nav: retNav && nav ? { series: nav.series, kind: nav.kind || "nav", navBasis: nav.navBasis || "nav", source: navVia, navIncremental: !!nav.navIncremental, registryCode: nav.registryCode || null, navShare: nav.navShare || null } : null,
+    nav: retNav && nav ? { series: nav.series, kind: nav.kind || "nav", navBasis: nav.navBasis || "nav", source: navVia, navIncremental: !!nav.navIncremental, regCode: nav.regCode || null, navShare: nav.navShare || null } : null,
     // 双来源明细（仅 appFirst 并发双抓且两家都拿到全序列时非空）：
     // [{bank, port, points, lastDate, lastNav}]，主来源（=navVia）排第一。
     // 前端「净值来源」列据此同时显示两家（用户 2026-10-25 要求「2 个都写」）。
@@ -4078,7 +4078,7 @@ export async function fetchProductFull(code, opts = {}) {
     } : null,
     benchmark: retInfo ? ((benchmark != null) ? benchmark : null) : null,  // 保留空串「已知无基准」哨兵，供前端缓存复用（不再重查）
     quota: retQuota ? (quota != null ? quota : null) : null,
-    bankInfo: retInfo ? (bankInfo ? { source: bankInfo.source || null, bank: bankInfo.bank || null, registryCode: bankInfo.registryCode || null } : null) : null,
+    bankInfo: retInfo ? (bankInfo ? { source: bankInfo.source || null, bank: bankInfo.bank || null, regCode: bankInfo.regCode || null } : null) : null,
     timings,                                  // [{stage, ms, note}] 分阶段耗时（2026-10-12 新增）
     // 双抓定标：发行/代销两家都被试探且分出胜负时，回传偏好银行（前端持久化为 preferBank，
     // 以后只抓该银行，不再试另一家）。undefined 时不下发，避免覆盖前端已有的有效标记。
@@ -4216,8 +4216,8 @@ export async function cebAppFetch(code, opts = {}) {
       regCode: d.regCode || null,
       // 2026-10-22：编排层信息阶段四项齐全检查与 chinawealthNav 的登记编码来源读的是
       // registryCode（boc 口径），ceb 对象一直只给 regCode → 恒判「缺登记编码」而多跑一次
-      // 中国理财网信息查询。补别名让直连四项齐全时跳过该查询（EW7746A 省 ~2.3s）。
-      registryCode: d.regCode || null,
+      // 中国理财网信息查询。曾补 registryCode 别名让直连四项齐全时跳过该查询（EW7746A 省 ~2.3s）。
+      // 2026-11-02 登记编码字段名统一为 regCode：编排层读取一并折叠，别名不再需要（否则成重复键）。
       benchmark: d.benchmark || null,
       remainQuota: (d.remainQuota != null) ? d.remainQuota : null,
       remainQuotaText: d.remainQuotaText || null,
@@ -4309,7 +4309,7 @@ export async function cebFetch(code, opts = {}) {
       risk: ai.risk || null,
       holdDays: ai.holdDays != null ? ai.holdDays : null,
       regCode: ai.regCode || null,
-      registryCode: ai.regCode || null, // 别名：编排层信息阶段读 registryCode 口径（见 cebAppFetch 同款注释）
+      // 2026-11-02 登记编码字段名统一为 regCode：原 registryCode 别名已折叠（见 cebAppFetch 同款注释）
       benchmark: ai.benchmark || null,
       remainQuota: ai.remainQuota != null ? ai.remainQuota : null,
       remainQuotaText: ai.remainQuotaText || null,
@@ -4462,7 +4462,7 @@ export async function cmbFetch(code, opts = {}) {
     risk: bobRiskToR(it.risk),
     benchmark: null,
     holdDays: cmbHoldDays(it.prdName, it.finDate, bobNormDate(it.expireDate), bobNormDate(it.beginDate)),
-    registryCode: it.regCode || null,
+    regCode: it.regCode || null,
     source: "live",
     // 2026-10-31 修复（本函数此前算出了 navIncremental 却**没放进返回对象**）：
     //   增量模式下招行腿只回 0~1 个新增点，编排层 navLegOk(series>=2 || navIncremental)
@@ -4688,7 +4688,7 @@ async function spdbAppFetch(code, transport) {
     established,
     establishedFromSeries: !/^\d{8}$/.test(fd),
     benchmark: bench || null,
-    registryCode: null, // RegistrantNo 是登记机构码（ZX=信银），非产品登记编码 Z7…
+    regCode: null, // RegistrantNo 是登记机构码（ZX=信银），非产品登记编码 Z7…
     latestNav: parseFloat(det.FinanceAccumulativeNet) || series[series.length - 1][1],
     latestNavDate: series[series.length - 1][0],
     kind: "nav",
@@ -4936,7 +4936,7 @@ async function spdbWmNav(code, transport) {
     if (!out.length) return null;
     return {
       series: out,
-      registryCode: /^Z\d{9,}$/.test(reg || "") ? reg : null,
+      regCode: /^Z\d{9,}$/.test(reg || "") ? reg : null,
       established: out[0][0],
       establishedFromSeries: true, // 浦发网银净值路径无成立日字段
       kind: "nav",
@@ -5252,7 +5252,7 @@ export async function spdbFetch(code, opts = {}) {
     risk: info.risk,
     benchmark: null,
     holdDays: spdbHoldDays(info.name),
-    registryCode: null,
+    regCode: null,
     source: "live",
     bank: "spdb",
     infoOnly: true,
@@ -5267,22 +5267,22 @@ export async function spdbFetch(code, opts = {}) {
  * 交通银行（BOCOM / comm）实时抓取 —— 双端口：App（手机银行 H5，优先）+ web（交银理财官网）
  *
  * ① App 端口（2026-10-17 打通）：手机银行分享详情页
- *      https://mbank.95559.com.cn/mobs6/wm/WM1/NWM1001.html?productNo=<销售码>&registerCode=<份额码>
+ *      https://mbank.95559.com.cn/mobs6/wm/WM1/NWM1001.html?productNo=<销售码>&shareCode=<份额码>
  *    页面 Vue SPA，数据走唯一业务网关（免登录、免签名、免会话——实测空 MSessionId 即可调）：
  *      POST https://mbank.95559.com.cn/mobs6/MobileBank//MOBS.MOBS-PRODUCTSRV.V-1.0/<txn>.ajax
  *      Content-Type: application/x-www-form-urlencoded
  *      body: processCode=<txn>&MSessionId=&isWap=1&pageCode=NWM1001&targetPageCode=NWM1001&
  *            contractNo=&diviceId=&method=&ninePageCode=NWM1001&fivePointLost=0&cardDateLost=0&
  *            timeStamph5=<ms>&bcm_channel=WAP&servNm=MOBS.MOBS-PRODUCTSRV.V-1.0&isNewJump=true&
- *            productNo=<销售码>&registerCode=<份额码>&category=01
+ *            productNo=<销售码>&shareCode=<份额码>&category=01
  *      响应：{RSP_BODY:{...}, RSP_HEAD:{TRAN_SUCCESS:"1"}}
- *    ⚠ registerCode（份额码）**必需**：缺失/错误均只回显入参、无业务数据（实测）。
- *       2026-10-17 晚补齐：实测 registerCode=「JY」是 App 产品超市的**通用访问码**——
+ *    ⚠ shareCode（份额码）**必需**：缺失/错误均只回显入参、无业务数据（实测）。
+ *       2026-10-17 晚补齐：实测 shareCode=「JY」是 App 产品超市的**通用访问码**——
  *       凡 App 仍在架的产品（6426/6428/1110/2069 实测均通，含中信代销的鑫荣日日开），
  *       传 JY 即回全字段；已下架（如 5811221111，2023-01 已停更）/ 他行渠道专售
  *       （5811226201 微众 / 5811225599 中行）则任何码都无数据 → 回退 web 端口。
  *       故默认码取 JY，分享链登记表（内置 COMM_REGISTER_CODES + 外置
- *       scrape/comm_register.json，/api/commapp?link= 自动落盘）仅作覆盖，用于个别
+ *       scrape/comm_share.json，/api/commapp?link= 自动落盘）仅作覆盖，用于个别
  *       需要非 JY 码的产品。安全性：productNo 严格驱动产品（response.prdCode === 入参，
  *       假码返回空），不存在「JY 把 A 产品数据返给 B 码」的串数据风险。
  *    交易码与字段：
@@ -5333,13 +5333,13 @@ const COMM_APP_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) Appl
 const COMM_APP_TIMEOUT_MS = 20000;
 
 /**
- * App 产品超市通用 registerCode（2026-10-17 晚实测）：凡 App 仍在架的产品传 JY 即回全字段
+ * App 产品超市通用 shareCode（2026-10-17 晚实测）：凡 App 仍在架的产品传 JY 即回全字段
  * （6426/6428/1110/2069 均通）；已下架/他行渠道专售的产品任何码都无数据 → 由 bocomFetch
  * 回退 web 端口。登记表优先级更高，用于个别需要非 JY 码的产品。
  */
 const COMM_APP_DEFAULT_RC = "JY";
 
-/** 已覆盖的产品：销售码 → registerCode（分享链参数；默认 JY 之外的个别产品才需要登记） */
+/** 已覆盖的产品：销售码 → shareCode（分享链参数；默认 JY 之外的个别产品才需要登记） */
 const COMM_REGISTER_CODES = {
   // 灵动慧利123号7天持有（交银理财稳享灵动慧利日开123号 7天持有期）—— 2026-10-17 用户分享链
   "5811226426": "JY",
@@ -5349,15 +5349,15 @@ const COMM_REGISTER_CODES = {
   "5811221110": "JY",
 };
 
-/** 允许把 code→registerCode 放外部 JSON 增量维护（不存在就只用内置表；同 ceb_eoap_access.json 模式） */
+/** 允许把 code→shareCode 放外部 JSON 增量维护（不存在就只用内置表；同 ceb_eoap_access.json 模式） */
 let _commRegCache = null;
-async function commRegisterMap() {
+async function commShareMap() {
   if (_commRegCache) return _commRegCache;
   const map = Object.assign({}, COMM_REGISTER_CODES);
   if (typeof process !== "undefined" && process.versions && process.versions.node) {
     try {
       const fs = await import("node:fs/promises");
-      const j = JSON.parse(await fs.readFile(new URL("./comm_register.json", import.meta.url), "utf8"));
+      const j = JSON.parse(await fs.readFile(new URL("./comm_share.json", import.meta.url), "utf8"));
       for (const k of Object.keys(j || {})) {
         if (/^[A-Za-z0-9]{4,20}$/.test(k) && typeof j[k] === "string") map[String(k).toUpperCase()] = j[k];
       }
@@ -5368,7 +5368,7 @@ async function commRegisterMap() {
 }
 
 /** 供宿主（serve.mjs）拿到新分享链时登记映射，免重启 */
-export function setCommRegisterCode(code, rc) {
+export function setCommShareCode(code, rc) {
   const c = String(code || "").trim().toUpperCase();
   const r = String(rc || "").trim();
   if (!c || !r) return false;
@@ -5464,9 +5464,9 @@ function commAppEstablished(perfList) {
 /**
  * 交通银行 App 端口抓取（mbank.95559.com.cn 手机银行网关，免登录直连）。
  * @param {string} code 销售码（如 5811226426）
- * @param {{registerCode?:string, transport?:function}} opts
+ * @param {{shareCode?:string, transport?:function}} opts
  * @returns {Promise<object|null>} { name, manager, risk, holdDays, established, benchmark,
- *   series, navLatest, navLatestDate, navViaCode, registerCode } 或 null（未登记 registerCode / 抓取失败）
+ *   series, navLatest, navLatestDate, navViaCode, shareCode } 或 null（未登记 shareCode / 抓取失败）
  */
 export async function commAppFetch(code, opts = {}) {
   const c = String(code || "").trim().toUpperCase();
@@ -5477,7 +5477,7 @@ export async function commAppFetch(code, opts = {}) {
   // 交银 App 端口的净值走 PRDAFD0002（历史净值全量），信息走 PRDAFD0007，两者解耦。
   const __noNav = opts.mode === "info" || opts.mode === "quota";
   // 登记表（分享链/非 JY 个别产品）优先 → 默认 JY（App 产品超市通用访问码）
-  const rc = String(opts.registerCode || "").trim() || (await commRegisterMap())[c] || COMM_APP_DEFAULT_RC;
+  const rc = String(opts.shareCode || "").trim() || (await commShareMap())[c] || COMM_APP_DEFAULT_RC;
   const t0 = Date.now();
   try {
     // ① 产品信息（2026-10-22：nav 模式跳过——信息接口不再当存在性/现金类闸门，直接抓净值）
@@ -5533,7 +5533,7 @@ export async function commAppFetch(code, opts = {}) {
       navLatest: last ? last[1] : null,
       navLatestDate: last ? last[0] : null,
       navViaCode: c,
-      registerCode: rc,
+      shareCode: rc,
     };
     navLog("comm app code=" + c + " rc=" + rc + " -> n=" + series.length + " name=" + (out.name || "-") +
       " risk=" + (out.risk || "-") + " hold=" + (out.holdDays == null ? "-" : out.holdDays) +
@@ -5643,7 +5643,7 @@ async function bocomWebFetch(code, transport) {
     risk: bocomRisk(bo.c_level),
     benchmark: bo.c_reserve0 || null,
     holdDays: bocomHoldDays(bo.c_fundname),
-    registryCode: reg,
+    regCode: reg,
     source: "live",
     bank: "comm",
     navVia: "comm",
@@ -5663,12 +5663,12 @@ export async function bocomFetch(code, opts = {}) {
   const sink = opts.__sink || null; // 耗时采集（fetchFromBank 下传）——用于分端口计时
   const c = String(code || "").trim().toUpperCase();
   if (!c) return null;
-  // App 端口（registerCode 默认 JY，登记表可覆盖）与 web 端口并行发起，总耗时≈二者较大值；
+  // App 端口（shareCode 默认 JY，登记表可覆盖）与 web 端口并行发起，总耗时≈二者较大值；
   // App 无数据（未上架/已下架）时秒级返回 null，不影响原 web 链路。
   // 2026-10-22 分端口计时：并发双抓时把 App / web 各自总耗时单独落账，便于在「时间分解」里
   //   直接对比哪个端口更快（否则只有一串按路径命名的子请求，看不出端口级快慢）。
   const tApp = Date.now();
-  const appP = commAppFetch(c, { registerCode: opts.registerCode, transport, mode: opts.mode }).then(
+  const appP = commAppFetch(c, { shareCode: opts.shareCode, transport, mode: opts.mode }).then(
     (r) => { navTiming(sink, "comm.App端口", Date.now() - tApp, r && r.series && r.series.length ? ("series=" + r.series.length) : (r ? "infoOnly" : "null")); return r; },
     (e) => { navTiming(sink, "comm.App端口", Date.now() - tApp, "throw " + ((e && e.message) || e)); return null; }
   );
@@ -5699,7 +5699,7 @@ export async function bocomFetch(code, opts = {}) {
       risk: app.risk,
       benchmark: app.benchmark,
       holdDays: app.holdDays,
-      registryCode: null,
+      regCode: null,
       source: "live",
       bank: "comm",
       navVia: "comm",
@@ -5730,7 +5730,7 @@ export async function bocomFetch(code, opts = {}) {
     risk: app.risk || web.risk,
     benchmark: app.benchmark || web.benchmark,
     holdDays: app.holdDays != null ? app.holdDays : web.holdDays,
-    registryCode: web.registryCode || null,
+    regCode: web.regCode || null,
     source: "live",
     bank: "comm",
     navVia: "comm",
@@ -6038,7 +6038,7 @@ export async function citicCmsFetch(code, opts = {}) {
     risk: citicRisk({ riskLevel: det.riskLevel, riskLevelStr: "" }),
     benchmark: det.benchmarks || null,
     holdDays: citicHoldDays(holdSrc),
-    registryCode: det.registCode || null,
+    regCode: det.registCode || null,
     source: "live",
     bank: "citic",
     navVia: "citic",
@@ -6176,7 +6176,7 @@ export async function citicFetch(code, opts = {}) {
     risk: (cms && cms.risk) || (dir && dir.risk) || null,
     benchmark: (cms && cms.benchmark) || (dir && dir.benchmark) || null,
     holdDays: (cms && cms.holdDays != null) ? cms.holdDays : (dir && dir.holdDays != null ? dir.holdDays : null),
-    registryCode: (cms && cms.registryCode) || (dir && dir.registryCode) || null,
+    regCode: (cms && cms.regCode) || (dir && dir.regCode) || null,
     source: "live",
     bank: "citic",
     navVia: "citic",
@@ -6687,7 +6687,7 @@ export async function ccbFetch(code, opts = {}) {
       risk: risk || (wmInfo ? wmInfo.risk : null),
       benchmark: benchmark || (wmInfo ? wmInfo.benchmark : null),
       holdDays: ccbHoldDays(it.Fnd_Nm),
-      registryCode: null,
+      regCode: null,
       source: "live",
       bank: "ccb",
       navLatest: latest ? latest.value : null,
@@ -6724,7 +6724,7 @@ export async function ccbFetch(code, opts = {}) {
     risk: risk || (wmInfo ? wmInfo.risk : null),
     benchmark: benchmark || (wmInfo ? wmInfo.benchmark : null),
     holdDays: ccbHoldDays(name),
-    registryCode: null,
+    regCode: null,
     source: "live",
     bank: "ccb",
     navVia, navPort,
@@ -7020,7 +7020,7 @@ export async function ccbwmFetch(code, opts = {}) {
     established: estReal,
     establishedFromSeries: !estReal,
     holdDays: ccbHoldDays(name) || wmTrmDays(trm),
-    registryCode: wmRegCode(det ? wmField(det, ["pdCd", "regCode", "prodRegCode"]) : null),
+    regCode: wmRegCode(det ? wmField(det, ["pdCd", "regCode", "prodRegCode"]) : null),
     kind: "nav",
     source: "live-ccbwm",
     bank: "ccb",
@@ -7119,7 +7119,7 @@ const CGB_APP_MAX_YEARS = 12;
 //   原因：fn20004 的说明书是扫描件/无文本层的比例不低（如 XFTLD98A），pypdf 抠不到 Z7 码；
 //   一旦抠不到，fetchMeta 会判定信息不全 → 回落中国理财网名称检索，整体耗时被推到 10s+，
 //   反而让前端判超时、落盘不更新（表现为「净值来源」少了 ·App）。
-//   故这里不再取 fn20004，registryCode 恒为 null，登记编码统一由 fetchMeta 的通用兜底走中国理财网补齐。
+//   故这里不再取 fn20004，regCode 恒为 null，登记编码统一由 fetchMeta 的通用兜底走中国理财网补齐。
 
 // 网关 senderSN：(时间戳 + 服务名第2~5位 + 4位随机).slice(0,30)，与前端 Qn() 同算法
 function cgbAppSenderSN(svc) {
@@ -7328,7 +7328,7 @@ export async function cgbAppFetch(code, opts = {}) {
   ]);
 
   // 登记编码：fn10025 无该字段；按用户规则不从说明书 PDF 抠 → 留 null，由 fetchMeta 兜底走中国理财网
-  const registryCode = null;
+  const regCode = null;
 
   // 【项目规则 2026-10-21】现金管理类（单位净值恒 1 + 累计净值递增）不抓：
   // 返回哨兵（产品信息也不收录），交编排层下发 isCash 让前端提示原因。
@@ -7345,7 +7345,7 @@ export async function cgbAppFetch(code, opts = {}) {
     risk: cgbAppRisk(fd.riskLevel),
     benchmark: fd.perforMark || null,
     holdDays: cgbAppHoldDays(fd),
-    registryCode,
+    regCode,
     series,
     kind: nav.kind || "nav",
     navBasis: nav.navBasis || "nav",
@@ -7496,7 +7496,7 @@ export async function cgbWebFetch(code, opts = {}) {
     risk: cgbRisk(riskRaw),
     benchmark: null,
     holdDays: cgbHoldDays(term),
-    registryCode: null,
+    regCode: null,
     source: "live",
     bank: "cgb",
     navVia: "cgb",
@@ -7817,7 +7817,7 @@ export async function cgbFetch(code, opts = {}) {
     for (const s of srcs) if (s.r && s.r[f] != null && s.r[f] !== "") return s.r[f];
     return undefined;
   };
-  for (const f of ["name", "manager", "risk", "benchmark", "holdDays", "established", "registryCode"]) {
+  for (const f of ["name", "manager", "risk", "benchmark", "holdDays", "established", "regCode"]) {
     const v = pick(f);
     if (v != null && v !== "") out[f] = v;
   }
@@ -8202,7 +8202,7 @@ async function fminbankAppFetch(code, opts = {}) {
   const name = d.product_name || d.product_short_name || null;
   const risk = /^R[1-9]$/.test(String(d.risk_level || "")) ? String(d.risk_level) : null;
   const benchmark = d.performance_benchmark || null;
-  const registryCode = d.product_register_code || null;
+  const regCode = d.product_register_code || null;
   // 成立日：历史业绩「成立以来」档的 yield_start_date（如 20250905）；缺位退序列首点
   let established = null, establishedFromSeries = true;
   const achList = (ach && ach.body && Array.isArray(ach.body.list)) ? ach.body.list : [];
@@ -8246,7 +8246,7 @@ async function fminbankAppFetch(code, opts = {}) {
     holdDays,
     risk,
     benchmark,
-    registryCode,
+    regCode,
     source: "live",
     bank: "fminbank",
     navVia: "fminbank", navPort: "app", navViaCode: pno,
@@ -8270,7 +8270,7 @@ export async function fminbankFetch(code, opts = {}) {
     const r = await fminbankAppFetch(c, opts);
     if (r && r.series && r.series.length >= 2) return r;
     // 有产品信息但净值不足 2 点（新发/募集期）：带信息返回，让编排层显示名称风险并继续兜底
-    if (r && (r.name || r.registryCode || r.risk)) return { ...r, series: r.series || [], infoOnly: true };
+    if (r && (r.name || r.regCode || r.risk)) return { ...r, series: r.series || [], infoOnly: true };
   } catch (e) { navLog("fminbank app throw " + ((e && e.message) || e)); /* 端口异常 → 回落 XPL */ }
   // ② 回落：中国理财网渠道份额快速通道（XPL = 规则允许的第 3 家，仅已登记份额码生效）
   return xplShareFastLane("fminbank", c, opts);
@@ -8365,7 +8365,7 @@ async function minshengApi(code, opts = {}) {
       risk: cmbcRiskToR(p.riskLevel),
       benchmark: null,
       holdDays: null,
-      registryCode: null,
+      regCode: null,
       navVia: "cmbc",
       navPort: "web",
       source: "live-cmbc",
@@ -8639,7 +8639,7 @@ async function cmbcAppFetch(code, transport, mode = "all") {
     risk: cmbcRiskToR(fd && (fd.RISK_LEVEL_NAME || fd.RISK_LEVEL)),
     benchmark: (fd && fd.COM_PARISON) || null,
     holdDays: cmbcHoldDays(name, fd),
-    registryCode: (fd && fd.ASSO_CODE) || null,
+    regCode: (fd && fd.ASSO_CODE) || null,
     series,
     kind: (nav && nav.kind) || "nav",
     navBasis: (nav && nav.navBasis) || "nav",
@@ -8683,7 +8683,7 @@ export async function cmbcFetch(code, opts = {}) {
     if (r && r._excludedCash) return r;
     if (r && r.series && r.series.length >= 2) return r;
     // 有产品信息但净值不足 2 点（新发/募集期）：带信息返回，让编排层显示名称风险并继续兜底
-    if (r && (r.name || r.registryCode || r.risk)) return { ...r, series: r.series || [], infoOnly: true };
+    if (r && (r.name || r.regCode || r.risk)) return { ...r, series: r.series || [], infoOnly: true };
   } catch (e) { /* App 端口异常，回落官网 */ }
 
   // ② 民生理财官网直连：净值序列 + 产品信息并行取（自营产品；App 端口对自营回「无此产品」）
@@ -8713,7 +8713,7 @@ export async function cmbcFetch(code, opts = {}) {
         risk: cmbcRiskToR(info && info.RISK_LEVEL),
         benchmark: (info && info.BENCHMARK_CUSTO) || null,
         holdDays: cmbcWmHoldDays(name, info),
-        registryCode: (info && info.TBPRDEXTEND_DEBT_REGIST_CODE) || null,
+        regCode: (info && info.TBPRDEXTEND_DEBT_REGIST_CODE) || null,
         source: "live",
         bank: "cmbc",
         navVia: "cmbcwm",
@@ -8734,7 +8734,7 @@ export async function cmbcFetch(code, opts = {}) {
         risk: cmbcRiskToR(info.RISK_LEVEL),
         benchmark: info.BENCHMARK_CUSTO || null,
         holdDays: cmbcWmHoldDays(name, info),
-        registryCode: info.TBPRDEXTEND_DEBT_REGIST_CODE || null,
+        regCode: info.TBPRDEXTEND_DEBT_REGIST_CODE || null,
         source: "live",
         bank: "cmbc",
         navVia: "cmbcwm",
@@ -8881,7 +8881,7 @@ function pinganHoldDays(name, indexContentSecond) {
  * 【官网接口（2026-10-23 逆向，免登录）】
  *   网关 host = https://wmm.pingan.com.cn/app（SPA 里 gw.host / intfgwHost 同值）
  *   ① GET  /product/getProductInfo?productCode=<份额码>   ← 明文，免鉴权
- *        productName/productSname、registerCode（登记编码）、productRiskRating（"2"→R2）、
+ *        productName/productSname、registerCode（份额访问码）、productRiskRating（"2"→R2）、
  *        establishmentDay（成立日）、perComBen（业绩比较基准）、maturityVarietyTxt（"7天(含)以内"）、
  *        isCashManagementCategory、incurredStatus 等。
  *   ② POST /nvl/getNvlView  {productId,pageNum:0,pageSize:0,currentTimeMillis,uuid}
@@ -9081,7 +9081,7 @@ export async function pinganWmFetch(code, opts = {}) {
   }
 
   const name = String(d.productSname || d.productName || "").trim() || null;
-  const registryCode = d.registerCode || null;
+  const regCode = d.registerCode || null;
   const risk = pinganRiskToR(d.productRiskRating);
   const established = bobNormDate(String(d.establishmentDay || d.shareEstablishDate || "").replace(/-/g, "")) || null;
   const benchmark = (typeof d.perComBen === "string" && d.perComBen.trim()) ? d.perComBen.trim() : null;
@@ -9107,7 +9107,7 @@ export async function pinganWmFetch(code, opts = {}) {
     if (series.length && series.every(([, v]) => Math.abs(v - 1) <= 1e-6)) { cash = true; series = []; }
   }
 
-  navLog("pinganwm code=" + c + " -> name=" + (name || "-") + " reg=" + (registryCode || "-") +
+  navLog("pinganwm code=" + c + " -> name=" + (name || "-") + " reg=" + (regCode || "-") +
     " n=" + series.length + " last=" + (series.length ? series[series.length - 1][0] : "-") +
     " (" + (Date.now() - t0) + "ms)");
 
@@ -9122,7 +9122,7 @@ export async function pinganWmFetch(code, opts = {}) {
     risk,
     benchmark,
     holdDays,
-    registryCode,
+    regCode,
     currency,
     source: "live",
     bank: "pingan",
@@ -9231,7 +9231,7 @@ async function pinganLive(code, opts = {}) {
     risk: pinganRiskToR(d && d.riskLevel),
     benchmark: null,
     holdDays: pinganHoldDays(name, d && d.indexContentSecond),
-    registryCode: (d && (d.bankFundRegisterCode || d.regCode || d.registerCode)) || null,
+    regCode: (d && (d.bankFundRegisterCode || d.regCode || d.registerCode)) || null,
     remainQuota,
     remainQuotaPct,
     saleStatus: (d && d.prdSaleStatus) || null,
@@ -9454,7 +9454,7 @@ export async function dongguanAppNav(code, transport, mode = "all") {
     risk: dgRisk(det && det.riskLevel),
     benchmark: null, // 端口无业绩基准字段（3.18% 成立以来年化由详情页前端算）
     holdDays: dgHoldDays(det && det.prodName),
-    registryCode: null, // 端口无登记编码，交编排层 XPL/中国理财网补
+    regCode: null, // 端口无登记编码，交编排层 XPL/中国理财网补
     source: "live",
     bank: "dongguan",
     navPort: "app", // 微信银行 H5 = App WebView 同款端口，前端显示「东莞银行·App」
@@ -9599,10 +9599,9 @@ export async function webankFetch(code, opts = {}) {
     // App 端口已拿到全量序列 → 净值主源为 App 端口（navVia=webank / navPort=app，前端「净值来源」显示微众银行App）
     if (xpl) {
       // XPL 补 App 端口缺失的登记编码 / 业绩基准 / 发行方（210 字段无这三项）。
-      // xpl 返回的是 registryCode，同时回填两种拼写（编排层读 registryCode，webank 自用 regCode）。
+      // xpl 返回的是 regCode，同时回填两种拼写（编排层读 regCode，webank 自用 regCode）。
       return fillMissing(app, {
-        regCode: xpl.registryCode || null,
-        registryCode: xpl.registryCode || null,
+        regCode: xpl.regCode || null,
         benchmark: xpl.benchmark || null,
         manager: xpl.manager || null,
         wbInfoSource: "webank/app+xpl",
@@ -9769,7 +9768,7 @@ async function huaxiaAppFetch(code, opts = {}) {
       risk: huxiaAppRisk(b.financial_risk) || huxiaAppRisk(b.rist),
       benchmark: huxiaBench(b.benchmark),
       holdDays: huxiaAppHoldDays(b.product_time),
-      registryCode: b.reg_code || null,
+      regCode: b.reg_code || null,
       series,
       kind: "nav",
       source: "live-huaxia",
@@ -9848,7 +9847,7 @@ export async function huaxiaFetch(code, opts = {}) {
     risk: null, // 该目录接口不含风险等级
     benchmark: bench,
     holdDays: huxiaHoldDays(p.licaiTimeLimit),
-    registryCode: null,
+    regCode: null,
     source: "live-huaxia",
     bank: "huaxia",
     navVia: "huaxia",
@@ -9868,7 +9867,7 @@ export async function huaxiaFetch(code, opts = {}) {
       benchmark: app.benchmark || wap.benchmark,
       holdDays: app.holdDays != null ? app.holdDays : wap.holdDays,
       established: app.established || wap.established,
-      registryCode: app.registryCode || wap.registryCode,
+      regCode: app.regCode || wap.regCode,
       remainQuota: app.remainQuota != null ? app.remainQuota : null,
       quotaState: app.quotaState || null,
       currency: "CNY",
@@ -10185,7 +10184,7 @@ export async function nanyinFetch(code, opts = {}) {
     risk: nyRiskToR(d.riskLevel),
     benchmark: null,
     holdDays: nyHoldDays(d),
-    registryCode: d.financingRegisterCode || d.regCode || null,
+    regCode: d.financingRegisterCode || d.regCode || null,
     source: "nanyin",
     raw: { variety: d.variety },
     navIncremental: !!opts.since && !__noNav,
@@ -10203,7 +10202,7 @@ export async function nanyinFetch(code, opts = {}) {
  *     / totNav(累计净值) / taCode / taShortName(管理人) / prodSeriesName / compareMark(业绩比较基准)
  *   分页：data.total / data.pages，size 固定 20（50 会 502）。prdCode 精确过滤，
  *        空 taCode 即可返回数据（旧资料称"需 taCode"，实测空值即生效）。
- *   注：该接口不返回风险等级与登记编码（监管 Z7…），本实现 risk/registryCode 置 null。
+ *   注：该接口不返回风险等级与登记编码（监管 Z7…），本实现 risk/regCode 置 null。
  * 净值口径：净值型，统一取 nav（单位净值）当单位净值用，kind:"nav"。
  * ========================================================================== */
 
@@ -10333,7 +10332,7 @@ async function boscWebFetch(code, opts = {}) {
           risk: null,
           benchmark: meta && meta.compareMark ? meta.compareMark.trim() : null,
           holdDays: meta ? boscHoldDays(meta.prdName) : null,
-          registryCode: null,
+          regCode: null,
           source: "live",
           bank: "bosc",
           navVia: "bosc",
@@ -10434,7 +10433,7 @@ async function boscWebFetch(code, opts = {}) {
     risk: null,
     benchmark: meta && meta.compareMark ? meta.compareMark.trim() : null,
     holdDays: meta ? boscHoldDays(meta.prdName) : null,
-    registryCode: null,
+    regCode: null,
     source: "live",
     navPort: "web", // 2026-11-01 (B)：显式标注端口（bosc 有 app/web 双端口，bankPortOf 推不出单端口）
     navIncremental: !!since,
@@ -10623,7 +10622,7 @@ async function boscAppFetch(code, transport, mode = "all") {
     risk: boscRiskToR(info && info.RiskLev),
     benchmark: (info && info.CompareMark) || null, // 开放式不返回；封闭式(1303)才有
     holdDays: boscHoldDays(name),
-    registryCode: null, // App 端口无登记编码，交编排层由中国理财网补
+    regCode: null, // App 端口无登记编码，交编排层由中国理财网补
     source: "live",
     bank: "bosc",
     navVia: "bosc",
@@ -10998,7 +10997,7 @@ export async function abcFetch(code, opts = {}) {
       risk: abcRiskToR(inf.risk),
       benchmark: inf.mkrdBaseDscrOld || null,
       holdDays: hd,
-      registryCode: null, // 农行公开接口不返回登记编码
+      regCode: null, // 农行公开接口不返回登记编码
       source: "live",
       infoOnly: true,
     };
@@ -11042,7 +11041,7 @@ export async function abcFetch(code, opts = {}) {
         name: null, manager: null,
         established: abcwMeta.estbl,
         series: [], kind: "nav", risk: null, benchmark: null, holdDays: null,
-        registryCode: null, source: "live", navIncremental: true,
+        regCode: null, source: "live", navIncremental: true,
       };
     }
     if (!ded.length) {
@@ -11067,7 +11066,7 @@ export async function abcFetch(code, opts = {}) {
       risk: null,
       benchmark: null,
       holdDays: null,
-      registryCode: null,
+      regCode: null,
       source: "live",
       navIncremental: true,
     };
@@ -11163,7 +11162,7 @@ export async function abcFetch(code, opts = {}) {
     risk: info ? abcRiskToR(info.risk) : null,
     benchmark: info ? info.mkrdBaseDscrOld || null : null,
     holdDays,
-    registryCode: null, // 农行公开接口不返回登记编码
+    regCode: null, // 农行公开接口不返回登记编码
     source: "live",
   };
 }
@@ -11733,7 +11732,7 @@ export async function xplFetch(code, opts = {}) {
         risk: bi.risk,
         benchmark: bi.benchmark,
         holdDays: bi.holdDays,
-        registryCode: regCode,
+        regCode: regCode,
         source: "live-xpl",
         navShare: share, // 实际查询所用份额码（排查用：与渠道码不同即走了份额码桥接）
       };
@@ -12204,7 +12203,7 @@ export async function xplNameToReg(name, code, transport, sink) {
 //   「代销行 + 发行行 + 中国理财网」三处全部抓空 → 前端显示「演示」。
 //
 // 桥接手段（按可靠性降序）：
-//   ① 代销行端口自己回 registryCode（多数银行有，浦发没有）；
+//   ① 代销行端口自己回 regCode（多数银行有，浦发没有）；
 //   ② XPL_SHARE_REG 人工映射——**仅当渠道码本身等于 xpl 的 subShareCode 时有效**，
 //      多份额产品（同一登记编码下 A/B/H… 各有独立净值）不适用，切勿盲目补录；
 //   ③ 名检索拿到「平台收录的份额码」，再用渠道产品名尾部份额字母替换尾字母
@@ -12386,7 +12385,7 @@ async function metaFromChinaWealthXpl(icbcName, icbcCode, regCode, sink, transpo
   const old = await metaFromChinaWealth(icbcName, null, icbcCode, reg2, sink);
   navTiming(sink, "2.信息·中国理财网(回退)", Date.now() - t1, old ? ("hit reg=" + (old.regCode || "-")) : "null");
   if (old && old.regCode) {
-    // 2026-10-16：regCode 是按码所得（银行直连 registryCode / XPL_SHARE_REG 份额映射 /
+    // 2026-10-16：regCode 是按码所得（银行直连 regCode / XPL_SHARE_REG 份额映射 /
     // 调用方显式传入 / xpl 名检索 subShareCode 核对）时，登记编码一律以它为准——旧站按名
     // 检索会把近名产品错配（实测聚宝盈60天2号 曾错挂 1 号的登记 Z7001026001429，对 2 号
     // 查净值恒 0 行）。名检索结果只用来补基准/风险等其它字段，登记编码不让它覆盖。
@@ -12647,7 +12646,7 @@ async function bobWebFetch(code, opts = {}) {
       risk: bobRiskToR(info.RISK_LEVEL_DESC),
       benchmark: info.PERFORMANCE_BENCHMARK || null,
       holdDays: bobHoldDays(info.PROD_TERM_DESC, info.PROD_TERM_DAYS),
-      registryCode: info.CHINABOND_REGCODE || null,
+      regCode: info.CHINABOND_REGCODE || null,
       source: "live",
       bank: "bob",
       navVia: "bob",
@@ -12689,7 +12688,7 @@ async function bobWebFetch(code, opts = {}) {
       risk: null,
       benchmark: null,
       holdDays: null,
-      registryCode: null,
+      regCode: null,
       source: "live",
       bank: "bob",
       navVia: "bob",
@@ -12744,7 +12743,7 @@ async function bobWebFetch(code, opts = {}) {
       risk: bobRiskToR(info.RISK_LEVEL_DESC),
       benchmark: info.PERFORMANCE_BENCHMARK || null,
       holdDays: bobHoldDays(info.PROD_TERM_DESC, info.PROD_TERM_DAYS),
-      registryCode: info.CHINABOND_REGCODE || null,
+      regCode: info.CHINABOND_REGCODE || null,
       source: "live",
       bank: "bob",
       navVia: "bob",
@@ -12793,7 +12792,7 @@ async function bobWebFetch(code, opts = {}) {
     risk: bobRiskToR(info.RISK_LEVEL_DESC),
     benchmark: info.PERFORMANCE_BENCHMARK || null,
     holdDays: bobHoldDays(info.PROD_TERM_DESC, info.PROD_TERM_DAYS),
-    registryCode: info.CHINABOND_REGCODE || null,
+    regCode: info.CHINABOND_REGCODE || null,
     source: "live",
     bank: "bob",
     navVia: "bob",
@@ -12842,7 +12841,7 @@ function bobMerge(web, app, c) {
       risk: app.risk,
       benchmark: app.benchmark,
       holdDays: app.holdDays,
-      registryCode: null, // App 端口无登记编码，交编排层中国理财网兜底
+      regCode: null, // App 端口无登记编码，交编排层中国理财网兜底
       remainQuota: app.remainQuota != null ? app.remainQuota : null,
       quotaState: app.quotaState || null,
       quotaText: app.quotaText || null,
@@ -12929,7 +12928,7 @@ export async function bobFetch(code, opts = {}) {
       series: [],
       kind: "nav",
       risk: qa.risk, benchmark: qa.benchmark, holdDays: qa.holdDays,
-      registryCode: null,
+      regCode: null,
       remainQuota: qa.remainQuota != null ? qa.remainQuota : null,
       quotaState: qa.quotaState || null,
       quotaText: qa.quotaText || null,
@@ -13187,7 +13186,7 @@ export async function cibFetch(code, opts = {}) {
             risk: cibRiskToR(inf.riskLevel),
             benchmark: null,
             holdDays: null,
-            registryCode: null,
+            regCode: null,
             source: "live",
             bank: "cib",
             navPort: "web",
@@ -13258,7 +13257,7 @@ export async function cibFetch(code, opts = {}) {
         const holdDays = null; // cibwm 搜索结果无明确持有天数，前端让用户补
         // 走到这里的都是单位净值型固收产品（现金管理类已在上面排除），kind 恒为 "nav"。
         // 【项目规则】不要 reintroduce kind:"wan" 之类的现金类口径标记——现金管理类不抓、不处理。
-        return { name, manager, established, series: ded, kind: "nav", risk, benchmark: null, holdDays, registryCode: null, source: "live", navPort: "web", navIncremental: !!opts.since };
+        return { name, manager, established, series: ded, kind: "nav", risk, benchmark: null, holdDays, regCode: null, source: "live", navPort: "web", navIncremental: !!opts.since };
       }
     } else if (opts.since && __wmOk) {
       // 2026-10-30 增量：官网命中但本轮无新披露点 = 已是最新 → 有效结果（空序列），
@@ -13266,7 +13265,7 @@ export async function cibFetch(code, opts = {}) {
       return {
         name: usedCode, manager: "兴银理财", established: null,
         series: [], kind: "nav", risk: null, benchmark: null, holdDays: null,
-        registryCode: null, source: "live", navPort: "web", navIncremental: true,
+        regCode: null, source: "live", navPort: "web", navIncremental: true,
       };
     }
   } catch (e) { /* cibwm 失败退回零售 */ }
@@ -13352,9 +13351,9 @@ export async function cibFetch(code, opts = {}) {
     const risk = cibRiskToR(info.riskLevel);
     const established = cibNormDate(info.establishDate) || ded[0][0];
     const holdDays = info.cycleValue != null ? Number(info.cycleValue) : null;
-    const registryCode = info.regCode || info.registryCode || null;
+    const regCode = info.regCode || info.regCode || null;
     const benchmark = info.resultValue || null;
-    return { name, manager, established, series: ded, kind: "nav", risk, benchmark, holdDays, registryCode, source: "live", navPort: "app" };
+    return { name, manager, established, series: ded, kind: "nav", risk, benchmark, holdDays, regCode, source: "live", navPort: "app" };
   } catch (e) {
     return null;
   }
@@ -13955,7 +13954,7 @@ async function nbcbSelfFetch(code, transport) {
     risk: null,
     benchmark: null,
     holdDays: nbcbHoldDays(name, null),
-    registryCode: hit.id || null,
+    regCode: hit.id || null,
     source: "live",
     bank: "nbcb",
   };
@@ -13985,7 +13984,7 @@ async function nbcbGwInfo(code, transport) {
     risk: nbcbRiskToR(it.riskLevel != null && it.riskLevel !== "" ? it.riskLevel : it.riskName),
     benchmark: it.bmkMsg || it.expectedRateShowName || null,
     holdDays: nbcbHoldDays(it.prdDeadlineShow, it.prdDeadlineSortInt),
-    registryCode: null,
+    regCode: null,
     infoOnly: true,
     source: "live",
     bank: "nbcb",
@@ -14485,7 +14484,7 @@ export default {
         live: ["icbc", "boc", "psbc", "ceb", "abc", "bob", "cmb", "bosc", "spdb", "ccb", "cib", "comm", "citic", "cgb", "fminbank", "nbcb",
           // jsb 依赖 Cloudflare Browser Rendering（browser binding）：配了 wrangler.browser.toml 才有
           ...((env && env.BROWSER) ? ["jsb"] : [])],
-        note: "GET /api/fetch?bank=icbc|boc|psbc|ceb|abc|bob|cmb|bosc|spdb|ccb|cib|comm|citic|cgb|fminbank|nbcb&code=<PRODID>（ceb 双端口：App 端口 eoap 营销 H5 eoap.cebbank.com/uiap/ebdcService（真 Chrome 过瑞数 RS5 + 借 App 自身国密模块调 eproduct/productDetail + financeProduct/performanceGraph，全量净值 + 七字段，需该产品分享链 accessId，一个 accessId 只对应一个产品）优先，官网 eportal（瑞数+WAF 常拒）兜底；abc 走农行理财e站；bob 双端口：App 端口 cdnmobibank 手机银行 H5（SM2/SM4 国密网关 POST /H，借无头 Chrome + JSON.parse hook 解密；详情七字段 + 额度 + 全量历史净值——页面内点图表时间 tab 后接口回 cd.list=[{navDate,nav,totNav}]，按交易日发布，2026-10-17 晚间 F12 抓包打通；按需单抓不进热路径，web 无结果时 fallback 或 /api/bobapp 显式触发，与 web 按日期并集合并）+ web 北银理财信披站 beijingbobwealth.com.cn（净值序列 + 登记编码，默认热路径只走它）；cmb 走招行 cfweb 理财超市 SM4 签名通道；bosc 走上海银行净值披露接口 qryMCFinanceNetProHisValueForPersonPage；spdb 产品信息取浦发 per.spdb.com.cn/api/search，净值按发行方路由到招行目录匹配；ccb 走建行 tool3.ccb.cn 理财净值披露；cib 双路径：兴银理财官网 cibwm.com.cn 干净 JSON + 兴业手机银行 z.cib.com.cn 国密(SM2握手+SM4/SM3)通道，覆盖兴银理财自营与跨行代销(如民生理财)产品；comm 双端口：App 端口 mbank.95559.com.cn 手机银行网关（POST /mobs6/MobileBank//MOBS.MOBS-PRODUCTSRV.V-1.0/PRDAFD0007.ajax 取名称/风险2R/最短持有minInvestTerm/业绩基准/发行机构 + PRDAFD0002.ajax 取净值序列，免登录免签名免会话；registerCode 默认 JY（App 产品超市通用访问码，在架产品即通），分享链登记表可覆盖，app 无数据（未上架/已下架）自动走 web；app 净值比 web 新一天但长产品只回近3年滚动窗，故按日期与 web 并集合并）优先，web 交银理财官网 www.bocommwm.com queryJylcProductDetail/queryJylcBreakDetail（免签名，仅校验 Referer；登记编码 Z7…/成立日取自此端口）兜底；citic 主走中信银行直连接口（RSA握手+3DES-ECB）取完整净值，H5 精选目录兜底回填产品信息；cgb 双端口：App MDP 网关 wap.cgbchina.com.cn/h5-mobilebank-app/noSessionServlet/hbss/*.lgx（会话号=页面 cookie MDP_A_KEY，fn10025 产品七字段 + fn10003 全量净值 + fn20004 说明书 PDF 取登记编码，免登录免签名）优先，官网 financing_details.jsp（GBK 页面，仅最新净值单点 + 名称/风险/投资期限）兜底；fminbank 富民银行 App 端口 = 理财代销 H5 公网网关 open.fbank.com/gateway/（fm-wealth-fund 应用，AES-128-CBC+PBKDF2 免登录免签名，productDetail 全字段 + getNetInfoList 全量净值自上架日 + 剩余额度；内部 product_no 经 FMBANK_CODE_MAP 静态表/排行榜 263 款目录名匹配映射，映射未命中回落中国理财网 XPL；2026-10-19 打通，Node/Workers 双端通用，瑞数 WAF 只挡浏览器不挡直连）；nbcb 双通道：宁银理财官网 www.wmbnb.com 取自营产品完整净值(需 valid_token 反爬 cookie) + 宁波银行网银/移动端网关 e.nbcb.com.cn/zhongtai 取跨行代销产品信息(网关不提供净值序列，返回 infoOnly)）",
+        note: "GET /api/fetch?bank=icbc|boc|psbc|ceb|abc|bob|cmb|bosc|spdb|ccb|cib|comm|citic|cgb|fminbank|nbcb&code=<PRODID>（ceb 双端口：App 端口 eoap 营销 H5 eoap.cebbank.com/uiap/ebdcService（真 Chrome 过瑞数 RS5 + 借 App 自身国密模块调 eproduct/productDetail + financeProduct/performanceGraph，全量净值 + 七字段，需该产品分享链 accessId，一个 accessId 只对应一个产品）优先，官网 eportal（瑞数+WAF 常拒）兜底；abc 走农行理财e站；bob 双端口：App 端口 cdnmobibank 手机银行 H5（SM2/SM4 国密网关 POST /H，借无头 Chrome + JSON.parse hook 解密；详情七字段 + 额度 + 全量历史净值——页面内点图表时间 tab 后接口回 cd.list=[{navDate,nav,totNav}]，按交易日发布，2026-10-17 晚间 F12 抓包打通；按需单抓不进热路径，web 无结果时 fallback 或 /api/bobapp 显式触发，与 web 按日期并集合并）+ web 北银理财信披站 beijingbobwealth.com.cn（净值序列 + 登记编码，默认热路径只走它）；cmb 走招行 cfweb 理财超市 SM4 签名通道；bosc 走上海银行净值披露接口 qryMCFinanceNetProHisValueForPersonPage；spdb 产品信息取浦发 per.spdb.com.cn/api/search，净值按发行方路由到招行目录匹配；ccb 走建行 tool3.ccb.cn 理财净值披露；cib 双路径：兴银理财官网 cibwm.com.cn 干净 JSON + 兴业手机银行 z.cib.com.cn 国密(SM2握手+SM4/SM3)通道，覆盖兴银理财自营与跨行代销(如民生理财)产品；comm 双端口：App 端口 mbank.95559.com.cn 手机银行网关（POST /mobs6/MobileBank//MOBS.MOBS-PRODUCTSRV.V-1.0/PRDAFD0007.ajax 取名称/风险2R/最短持有minInvestTerm/业绩基准/发行机构 + PRDAFD0002.ajax 取净值序列，免登录免签名免会话；shareCode 默认 JY（App 产品超市通用访问码，在架产品即通），分享链登记表可覆盖，app 无数据（未上架/已下架）自动走 web；app 净值比 web 新一天但长产品只回近3年滚动窗，故按日期与 web 并集合并）优先，web 交银理财官网 www.bocommwm.com queryJylcProductDetail/queryJylcBreakDetail（免签名，仅校验 Referer；登记编码 Z7…/成立日取自此端口）兜底；citic 主走中信银行直连接口（RSA握手+3DES-ECB）取完整净值，H5 精选目录兜底回填产品信息；cgb 双端口：App MDP 网关 wap.cgbchina.com.cn/h5-mobilebank-app/noSessionServlet/hbss/*.lgx（会话号=页面 cookie MDP_A_KEY，fn10025 产品七字段 + fn10003 全量净值 + fn20004 说明书 PDF 取登记编码，免登录免签名）优先，官网 financing_details.jsp（GBK 页面，仅最新净值单点 + 名称/风险/投资期限）兜底；fminbank 富民银行 App 端口 = 理财代销 H5 公网网关 open.fbank.com/gateway/（fm-wealth-fund 应用，AES-128-CBC+PBKDF2 免登录免签名，productDetail 全字段 + getNetInfoList 全量净值自上架日 + 剩余额度；内部 product_no 经 FMBANK_CODE_MAP 静态表/排行榜 263 款目录名匹配映射，映射未命中回落中国理财网 XPL；2026-10-19 打通，Node/Workers 双端通用，瑞数 WAF 只挡浏览器不挡直连）；nbcb 双通道：宁银理财官网 www.wmbnb.com 取自营产品完整净值(需 valid_token 反爬 cookie) + 宁波银行网银/移动端网关 e.nbcb.com.cn/zhongtai 取跨行代销产品信息(网关不提供净值序列，返回 infoOnly)）",
       });
     }
 

@@ -219,7 +219,7 @@ export async function cmbwmByCode(code, opts = {}) {
     risk: info && info.rskGrd ? (RISK[info.rskGrd] || ("R" + String(info.rskGrd).replace(/^0+(?=\d)/, ""))) : null,
     benchmark: (info && info.pfmCompBchmRmk) || null,
     holdDays: info ? cmbHoldDaysFromName(info.prodNam || info.csName) : null,
-    registryCode: (info && info.prodRegId) || null,
+    regCode: (info && info.prodRegId) || null,
     source: "live",
     bank: "cmb",
     navVia: "cmb",
@@ -235,7 +235,7 @@ export async function cmbwmByCode(code, opts = {}) {
 
 /**
  * 招银理财官网全量目录枚举（cfweb 下架产品仍留存于此）。
- * 返回 [{code, shortName, registerCode, risk, status, benchmark, ipoBgnDt, ipoEndDt, xpcMtuDt}]
+ * 返回 [{code, shortName, regCode, risk, status, benchmark, ipoBgnDt, ipoEndDt, xpcMtuDt}]
  */
 export async function cmbwmCatalog(opts = {}) {
   const base = { prodClcMode: "01", finType: "P" };
@@ -283,7 +283,7 @@ export async function cmbwmCatalog(opts = {}) {
     products.push({
       code,
       shortName: x.csName || null,
-      registerCode: x.prodRegId || null,
+      regCode: x.prodRegId || null,
       risk: RISK[x.rskGrd] || x.rskGrd || null,
       status: saleState,
       benchmark: x.pfmCompBchmRmk || null,

@@ -287,7 +287,7 @@ export async function cmbwmByCode(code, opts = {}) {
     benchmark: (info && info.pfmCompBchmRmk) || null,
     // 2026-10-31 移植：用名称解析最短持有天数（覆盖 月/年/季/周 + 中文数字 + 封闭期用到期日兜底）
     holdDays: info ? cmbHoldDaysFromName(info.prodNam || info.csName) : null,
-    registryCode: (info && info.prodRegId) || null,
+    regCode: (info && info.prodRegId) || null,
     source: "live",
     bank: "cmb",
     navVia: "cmb",
@@ -306,7 +306,7 @@ export async function cmbwmByCode(code, opts = {}) {
 
 /**
  * 招银理财官网全量目录枚举（cfweb 下架产品仍留存于此，是 132112D 这类产品的唯一出口）。
- * 返回 [{code, shortName, registerCode, risk, status, benchmark, ipoBgnDt, ipoEndDt, xpcMtuDt}]
+ * 返回 [{code, shortName, regCode, risk, status, benchmark, ipoBgnDt, ipoEndDt, xpcMtuDt}]
  * —— 可直接用来补全/发现「招行代销它行 + 招银理财自营」候选。
  */
 export async function cmbwmCatalog(opts = {}) {
@@ -356,7 +356,7 @@ export async function cmbwmCatalog(opts = {}) {
     products.push({
       code,
       shortName: x.csName || null,
-      registerCode: x.prodRegId || null,
+      regCode: x.prodRegId || null,
       risk: RISK[x.rskGrd] || x.rskGrd || null,
       status: saleState,
       benchmark: x.pfmCompBchmRmk || null,

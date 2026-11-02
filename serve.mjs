@@ -631,7 +631,7 @@ const server = http.createServer(async (req, res) => {
       }
       const ms = Date.now() - t0;
       if (!out) return sendJson(res, 502, { error: "jsbapp 未取到数据（Chrome/网络/接口变化，或该产品码在江苏银行查无）" });
-      console.log("[jsbapp] " + out.productCode + " " + out.name + " nav=" + out.nav + " est=" + out.established + " risk=" + out.risk + " reg=" + out.registryCode + " hold=" + out.holdDays + " series=" + out.series.length + " (" + ms + "ms)");
+      console.log("[jsbapp] " + out.productCode + " " + out.name + " nav=" + out.nav + " est=" + out.established + " risk=" + out.risk + " reg=" + out.regCode + " hold=" + out.holdDays + " series=" + out.series.length + " (" + ms + "ms)");
       return sendJson(res, 200, out);
     } catch (e) {
       console.log("[jsbapp] 失败：" + e.message + " (" + (Date.now() - t0) + "ms)");
@@ -641,41 +641,41 @@ const server = http.createServer(async (req, res) => {
 
   if (u.pathname === "/api/commapp") {
     // 交通银行 App 端口（mbank.95559.com.cn 手机银行网关，2026-10-17 打通，免登录直连）：
-    //   GET /api/commapp?link=<分享链>      从分享链抠 productNo+registerCode，抓完自动落盘登记表
-    //   GET /api/commapp?code=5811226426    按产品代码取（须已登记 registerCode）
-    //   GET /api/commapp?code=5811226426&registerCode=JY   显式给 registerCode（同样自动落盘）
-    // registerCode（份额码）只在分享链里出现，故新产物必须先用 ?link= 登记一次。
+    //   GET /api/commapp?link=<分享链>      从分享链抠 productNo+shareCode，抓完自动落盘登记表
+    //   GET /api/commapp?code=5811226426    按产品代码取（须已登记 shareCode）
+    //   GET /api/commapp?code=5811226426&shareCode=JY   显式给 shareCode（同样自动落盘）
+    // shareCode（份额码）只在分享链里出现，故新产物必须先用 ?link= 登记一次。
     const code = (u.searchParams.get("code") || "").trim().toUpperCase();
     const link = (u.searchParams.get("link") || "").trim();
-    let rc = (u.searchParams.get("registerCode") || "").trim();
+    let rc = (u.searchParams.get("shareCode") || "").trim();
     let prodNo = code;
     if (!rc && link) {
       try {
         const lu = new URL(link);
         prodNo = (lu.searchParams.get("productNo") || "").trim().toUpperCase() || prodNo;
-        rc = (lu.searchParams.get("registerCode") || "").trim();
+        rc = (lu.searchParams.get("shareCode") || "").trim();
       } catch (e) { /* 非法链接 */ }
     }
-    if (!prodNo && !rc) return sendJson(res, 400, { error: "missing code / link / registerCode" });
+    if (!prodNo && !rc) return sendJson(res, 400, { error: "missing code / link / shareCode" });
     const t0 = Date.now();
     try {
-      const regFile = new URL("./scrape/comm_register.json", import.meta.url);
+      const regFile = new URL("./scrape/comm_share.json", import.meta.url);
       if (!rc && prodNo) {
         try { rc = (JSON.parse(fs.readFileSync(regFile, "utf8")) || {})[prodNo] || ""; } catch (e) { rc = ""; }
-        if (!rc) return sendJson(res, 404, { error: "该产品尚未登记 registerCode，请用 ?link=<微信分享链> 首次抓取", code: prodNo });
+        if (!rc) return sendJson(res, 404, { error: "该产品尚未登记 shareCode，请用 ?link=<微信分享链> 首次抓取", code: prodNo });
       }
-      if (prodNo && rc) W.setCommRegisterCode(prodNo, rc);
-      const out = await W.commAppFetch(prodNo, { registerCode: rc, transport: nodeTransport });
+      if (prodNo && rc) W.setCommShareCode(prodNo, rc);
+      const out = await W.commAppFetch(prodNo, { shareCode: rc, transport: nodeTransport });
       const ms = Date.now() - t0;
-      if (!out) return sendJson(res, 502, { error: "comm app 未取到数据（registerCode 可能不对 / 网络波动）" });
-      // 自动落盘 code→registerCode，方便下次直接按 code 抓
+      if (!out) return sendJson(res, 502, { error: "comm app 未取到数据（shareCode 可能不对 / 网络波动）" });
+      // 自动落盘 code→shareCode，方便下次直接按 code 抓
       try {
         let map = {};
         try { map = JSON.parse(fs.readFileSync(regFile, "utf8")) || {}; } catch (e) { map = {}; }
-        if (out.navViaCode && out.registerCode && map[out.navViaCode] !== out.registerCode) {
-          map[out.navViaCode] = out.registerCode;
+        if (out.navViaCode && out.shareCode && map[out.navViaCode] !== out.shareCode) {
+          map[out.navViaCode] = out.shareCode;
           fs.writeFileSync(regFile, JSON.stringify(map, null, 2) + "\n");
-          console.log("[commapp] 已登记 " + out.navViaCode + " → registerCode " + out.registerCode);
+          console.log("[commapp] 已登记 " + out.navViaCode + " → shareCode " + out.shareCode);
         }
       } catch (e) { /* 落盘失败不影响返回 */ }
       console.log("[commapp] " + out.navViaCode + " 净值=" + (out.series || []).length + " 点 最新=" +
@@ -706,7 +706,7 @@ const server = http.createServer(async (req, res) => {
       console.log("[bocapp] " + code + " " + (out.name || "").slice(0, 24) +
         " 净值=" + n + " 点 最新=" + (out.navDate || "-") + " " + (out.latestNav != null ? out.latestNav : "-") +
         " holdDays=" + (out.holdDays != null ? out.holdDays : "-") +
-        " risk=" + (out.risk || "-") + " reg=" + (out.registryCode || "-") +
+        " risk=" + (out.risk || "-") + " reg=" + (out.regCode || "-") +
         " manager=" + (out.manager || "-") + " quota=" + (out.quotaText || "-") + " (" + ms + "ms)");
       return sendJson(res, 200, out);
     } catch (e) {
