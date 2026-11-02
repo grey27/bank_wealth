@@ -19,7 +19,9 @@ _cdp_profile*/
 
 # --- 研究脚本与日志 ---
 *.py
-!refresh_log_xls.py          # serve.mjs 刷新日志功能依赖它，需随仓库走
+# 例外：serve.mjs 刷新日志功能依赖它，需随仓库走（注释须独立成行，
+# gitignore 只把「行首 #」当注释，行尾 # 会并入模式字面量使例外失效）
+!refresh_log_xls.py
 *.log
 
 # --- 根目录散落的调试脚本 / 数据（仅 serve.mjs 等 essentials 随仓库，其余忽略） ---
@@ -72,7 +74,8 @@ scrape/*.json
 !scrape/comm_register.json
 !scrape/package.json
 scrape/*.txt
-!scrape/cmbwm_pubkey.txt     # SM2 公钥，Worker 需要
+# 例外：SM2 公钥，Worker 需要
+!scrape/cmbwm_pubkey.txt
 scrape/worker.js.备份-*
 scrape/cmbwm_profile/
 
@@ -84,9 +87,9 @@ scrape/cmbwm_profile/
 刷新顺序*
 代码预判规则v4-优化报告.md
 销售代码-*
-# 例外：predict_bank.js 运行时必需（v4，含 global_probe_order）；注释须独立成行，
-# 因 gitignore 仅把「行首 #」当注释，行尾 # 会并入模式字面量导致例外失效。
-!销售代码-预判规则.json
+# 说明：预判规则只保留 ASCII 名 predict-rules.json 入仓（Worker 与本地 predict_bank.js
+# 共用同一份 v4）。中文名「销售代码-预判规则.json」留在磁盘上供本地使用，
+# predict_bank.js 按 [predict-rules.json, 销售代码-预判规则.json] 顺序回退读取。
 无法预判-*
 项目命名方案.md
 名称持有天数函数说明.md

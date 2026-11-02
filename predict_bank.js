@@ -4,10 +4,27 @@
 const fs = require("fs");
 const path = require("path");
 
-const RULES = path.join(__dirname, "销售代码-预判规则.json");
+// 规则 JSON 文件名候选：优先 ASCII 名（predict-rules.json，线上 Worker 也用它，
+// URL 免中文编码问题），回退中文名（历史命名，本地旧目录里是这个名字）。
+const RULE_FILES = ["predict-rules.json", "销售代码-预判规则.json"];
 let _d = null;
 function load() {
-  if (_d === null) _d = JSON.parse(fs.readFileSync(RULES, "utf8"));
+  if (_d === null) {
+    for (const f of RULE_FILES) {
+      const p = path.join(__dirname, f);
+      try {
+        _d = JSON.parse(fs.readFileSync(p, "utf8"));
+        break;
+      } catch (e) {
+        // 下一个候选
+      }
+    }
+    if (_d === null) {
+      throw new Error(
+        "预判规则 JSON 未找到，已尝试: " + RULE_FILES.join(", ") + "（请确认文件在仓库根目录）"
+      );
+    }
+  }
   return _d;
 }
 
