@@ -3326,7 +3326,8 @@ window.CANDIDATES = [];
       const catSet = catCodeSet();
       codes.forEach(code => {
         // 目录中的产品（含退回候选的）真正从目录删除；deleteProduct 已同步清理净值记录与退回候选标记
-        if (catSet.has(code)) Engine.deleteProduct(code);
+        // try/catch 防御：即便 deleteProduct 因任何原因抛错，也保证下方 toCand 清理与提示照常执行，避免「删不掉」
+        try { if (catSet.has(code)) Engine.deleteProduct(code); } catch (e) { console.warn("[del] 删除目录项失败（已跳过）:", code, e); }
       });
       state.toCand = state.toCand.filter(c => codes.indexOf(c) < 0);
       persistToCand();
