@@ -1,0 +1,9 @@
+{
+  "name": "lclist-scrape",
+  "private": true,
+  "type": "module",
+  "comment": "声明本目录 .js 按 ESM 解析（worker.js / test_transport.js 用 import 语法）。根 package.json 故意不加 type:module，以保持 predict_bank.js（CommonJS/require）可被 require。jsb_crypto/src/*.js 是浏览器全局脚本源文件、不被 import，不受此影响。",
+  "dependencies": {
+    "wrangler": "^4.154.0"
+  }
+}

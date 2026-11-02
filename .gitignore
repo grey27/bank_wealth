@@ -68,7 +68,9 @@ scrape/*.html
 scrape/*.log
 scrape/*.md
 scrape/*.json
-!scrape/comm_register.json   # Worker 可能需要
+# 例外（Worker 可能需要）；注释须独立成行，gitignore 只认行首 # 为注释
+!scrape/comm_register.json
+!scrape/package.json
 scrape/*.txt
 !scrape/cmbwm_pubkey.txt     # SM2 公钥，Worker 需要
 scrape/worker.js.备份-*
@@ -82,6 +84,9 @@ scrape/cmbwm_profile/
 刷新顺序*
 代码预判规则v4-优化报告.md
 销售代码-*
+# 例外：predict_bank.js 运行时必需（v4，含 global_probe_order）；注释须独立成行，
+# 因 gitignore 仅把「行首 #」当注释，行尾 # 会并入模式字面量导致例外失效。
+!销售代码-预判规则.json
 无法预判-*
 项目命名方案.md
 名称持有天数函数说明.md
