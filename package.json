@@ -2,7 +2,6 @@
   "name": "lclist-finance-gha",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
   "scripts": {
     "fetch": "node scripts/fetch-jsb-ceb.mjs"
   },
