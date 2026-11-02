@@ -1,0 +1,37 @@
+# Cloudflare Worker 部署配置（lclist-finance-api 抓取代理）—— **含 Browser Rendering 绑定版**
+#
+# 用途：在标准 wrangler.toml 基础上**增加 Cloudflare Browser Rendering 绑定**，
+#      使「江苏银行 jsb」「光大银行 ceb」在线上 Worker 里也能抓（详见 jsb_worker.mjs 的说明）。
+#
+# 为什么需要它：
+#   江苏银行全线（手机银行 H5 mbank5h5 / 官网 www / 苏银理财官网 suyinwealth）都挂在
+#   同一套 WAF 后面：首访 202/412/445 + JS 挑战页，挑战脚本是**多层 eval 虚拟机**，
+#   解出的每个请求 URL 都要带签名 XhC8Wb（实测：不带签名的请求，一次挑战只放行第 1 个）。
+#   光大官网净值口（/eportal/ui ... getLsjz.portlet）裸 fetch 恒 412 瑞数挑战。
+#   Cloudflare Workers **禁止 eval() / new Function**，
+#   ⇒ 纯 fetch 方案在 Worker 里必然被拦；只有驱动真 Chromium 才能过。
+#
+# 启用前提（2026-10-29 官方文档核实，**旧注释"需 Workers Paid"已作废**）：
+#   Browser Rendering **Workers Free 计划即含免费额度**——10 分钟/天 browser time + 3 并发浏览器
+#   （官方 pricing：https://developers.cloudflare.com/browser-rendering/platform/pricing/
+#     "Available on Free and Paid plans"；Free: Browser hours 10 minutes per day）。
+#   ⇒ 无需升级付费计划即可部署。Free 的真正约束是 **Worker CPU 10ms/请求**（Paid 默认 30s）；
+#     但「等待网络请求不计入 CPU 时间」，浏览器耗时单独计 browser time，
+#     且本 Worker 只做 CDP 转发 + 轻量映射（334 点级），不重计算 → Free 额度内可行。
+#   若日后用量增长（>10 分钟/天），再升 Workers Paid（$5/月，含 10 小时/月 + 30s CPU）。
+#
+# 部署：npx wrangler deploy -c wrangler.browser.toml
+# 本机调试：npx wrangler dev -c wrangler.browser.toml --remote
+#           （remote 才能用上真实 Browser Rendering；本地默认是模拟浏览器）
+name = "lclist-finance-api"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[browser]
+binding = "BROWSER"
+
+# ⚠ Free 计划 CPU 仅 10ms；**Free 无权提升 cpu_ms**，写 [limits] 会被 API 直接拒绝（部署失败）。
+#    故此处不写 [limits]。升到 Workers Paid 后可打开下面这段（默认 30s，最高 5min）：
+#
+# [limits]
+# cpu_ms = 30000

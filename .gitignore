@@ -1,0 +1,93 @@
+# ===== 本仓库 = 可部署的「理财产品聚焦」单页应用 + Worker 源码 + Actions =====
+# 调试/研究产生的杂项保留在磁盘上（复制目录即可本地调试），但绝不进仓库、绝不部署到 Pages。
+
+# --- 工具/记忆/引用 ---
+.workbuddy/
+.银行净值直连端口能力清单.ref/
+bankscrape/
+
+# --- 备份 / 临时 / 下划线前缀的调试产物 ---
+_bak_*
+*备份*
+*.bak*
+*.pre-rm*
+_*
+*.tmp
+node_modules/
+.wrangler/
+_cdp_profile*/
+
+# --- 研究脚本与日志 ---
+*.py
+!refresh_log_xls.py          # serve.mjs 刷新日志功能依赖它，需随仓库走
+*.log
+
+# --- 根目录散落的调试脚本 / 数据（仅 serve.mjs 等 essentials 随仓库，其余忽略） ---
+/*.mjs
+!serve.mjs
+/*.sh
+deliver/*.json
+scripts/dbg-*
+psbc_consign_*.json
+psbc_detail_*.json
+psbc_financeMarket_*.json
+quota_sweep*.json
+
+# --- 抓包/截图/逆向文档（研究用，不部署） ---
+*.md
+*.csv
+*.xls
+*.xlsx
+*.png
+*.pdf
+*.html
+!index.html                  # 应用入口，必须保留
+*.docx
+我们.html
+QUOTA_B_LOG.md
+
+# --- 银行调试产物目录（PCAPdroid / Chrome 抓包落盘） ---
+中国银行/
+中邮银行/
+交通银行/
+兴业银行/
+农行银行/
+南京银行/
+工商银行/
+建设银行/
+招商银行/
+中信银行/
+
+# --- scrape 内的杂项（仅 Worker 源码 + 必要配置已显式 git add） ---
+scrape/_*
+scrape/probe_*.mjs
+scrape/*.csv
+scrape/*.png
+scrape/*.pdf
+scrape/*.html
+scrape/*.log
+scrape/*.md
+scrape/*.json
+!scrape/comm_register.json   # Worker 可能需要
+scrape/*.txt
+!scrape/cmbwm_pubkey.txt     # SM2 公钥，Worker 需要
+scrape/worker.js.备份-*
+scrape/cmbwm_profile/
+
+# --- 其它散落的数据/文档 ---
+台账数据.json
+运行日志*.json
+销售代码-预判规则v3.json
+无法预判-默认银行序.json
+刷新顺序*
+代码预判规则v4-优化报告.md
+销售代码-*
+无法预判-*
+项目命名方案.md
+名称持有天数函数说明.md
+银行直连探测-端点清单.md
+耗时分解*
+所有产品*
+银行列表_代销银行_抓净值.csv
+银行净值直连端口能力清单.*
+便携部署说明.docx

@@ -1,0 +1,6 @@
+# Cloudflare Worker 部署配置（lclist-finance-api 抓取代理）
+# 用途：本文件让 `wrangler deploy` 能直接发布 scrape/worker.js 到既有线上 Worker。
+# 注意：Worker 本身无 KV/D1/环境变量绑定（纯 fetch 代理），故无需 bindings 段。
+name = "lclist-finance-api"
+main = "worker.js"
+compatibility_date = "2026-10-01"
