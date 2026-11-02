@@ -162,8 +162,15 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
   white-space: normal; overflow: hidden; text-decoration: none; }  /* 列表产品名去掉下划线（详情页主名称 #dName 不受影响） */
 /* 名称框：让 R1-R5 风险角标紧贴产品名称右上角 */
 .name-wrap { position: relative; display: inline-block; vertical-align: top; max-width: 100%; }
-/* 跨银行视图（持仓$）时产品名下方显示代销银行（灰色、小一号） */
+/* 收藏标记：产品名后的橙色五角星 */
+.name-star { color: var(--orange); margin-left: 2px; font-size: calc(12px * var(--fs)); }
+/* 跨银行视图（收藏★/持仓$）时产品名下方显示代销银行（灰色、小一号） */
 .name-bank { display: block; margin-top: 2px; font-size: calc(11px * var(--fs)); color: #9a97a3; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 收藏模式：每行加高 20%（31px → 37.2px），给名称下方的银行行留出空间 */
+.ptable.star-rows tbody td { height: calc(31px * var(--fs) * 1.2); }
+/* 收藏模式：隐藏银行卡片（银行筛选 chip），列表直接展示「不分银行」的所有收藏产品 */
+.hero.star-hidden .bank-row,
+.hero.star-hidden .search-row { display: none; }
 .hero.held-hidden .bank-row,
 .hero.held-hidden .search-row { display: none; }
 .val-red { color: var(--red); font-weight: 600; }
@@ -294,6 +301,7 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
   background: rgba(255, 255, 255, .22); color: #fff; font-size: calc(11px * var(--fs)); gap: 2px;
 }
 .pill b { font-size: calc(13px * var(--fs)); }
+.pill.star-pill.on { background: var(--orange); }
 .pill.loading { opacity: .55; pointer-events: none; }
 .pill.loading b { display: inline-block; animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
@@ -785,6 +793,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
       <div class="head-icons">
         <button class="icon-btn" id="btnRefresh" title="所有产品刷新"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
         <button class="icon-btn" id="btnHeld" title="只看持有"><span aria-hidden="true">$</span></button>
+        <button class="icon-btn" id="btnStar" title="只看收藏"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" stroke="none" aria-hidden="true"><path d="M12 2.8l2.85 5.78 6.38.93-4.62 4.5 1.09 6.36L12 17.4l-5.7 3 1.09-6.37-4.62-4.5 6.38-.92z"/></svg></button>
         <button class="icon-btn" id="btnSearch" title="搜索"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.8" y1="16.8" x2="21" y2="21"/></svg></button>
         <button class="icon-btn" id="btnManage" title="产品管理（添加 / 修改 / 删除）"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
       </div>
@@ -858,6 +867,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
       <h2>产品详情</h2>
       <div class="drawer-actions">
         <button class="pill" id="btnRefreshDetail"><b>↻</b><span>刷新</span></button>
+        <button class="pill star-pill" id="btnStarDetail"><b>★</b><span>已收藏</span></button>
         <button class="pill" id="btnHold"><b>¥</b><span>加持仓</span></button>
         <button class="pill" id="btnSoldOut"><b>⛔</b><span>标记售罄</span></button>
         <button class="pill" id="btnPk"><b>PK</b><span>表现</span></button>
@@ -1929,12 +1939,15 @@ window.CANDIDATES = [];
     sort: "dailyWan",
     order: "desc",
     q: "",
+    starOnly: false,
     heldOnly: false,
     banks: [],
     rows: [],
     modes: {},
     holidays: [],
     lastRefresh: "",
+    // 收藏的产品代码（前端本地状态，与「持有$」互斥的跨银行视图）
+    favs: JSON.parse(localStorage.getItem("observer_favs") || "[]"),
     // 由「精选」移到「候选」的产品代码。这些产品仍留在目录中（银行归属、真实净值、指标都不丢），
     // 只是不在精选显示、改在候选显示。此前缺这个标记，退回的产品会退化工行候选池里的同名产品，
     // 于是中国银行的产品被算成工商银行的候选。
@@ -2004,6 +2017,16 @@ window.CANDIDATES = [];
     t.classList.remove("hidden");
     clearTimeout(toast._t);
     toast._t = setTimeout(() => t.classList.add("hidden"), 1800);
+  }
+
+  /* ---------- 收藏（★） ---------- */
+  // 收藏是纯前端本地状态：产品代码数组存 localStorage「observer_favs」，
+  // 主页顶栏 ★ 切「只看收藏」跨银行视图，详情页 ★ pill 增删收藏。
+  function isFav(code) { return state.favs.includes(code); }
+  function toggleFav(code) {
+    const i = state.favs.indexOf(code);
+    if (i >= 0) state.favs.splice(i, 1); else state.favs.push(code);
+    localStorage.setItem("observer_favs", JSON.stringify(state.favs));
   }
 
 
@@ -2674,6 +2697,7 @@ window.CANDIDATES = [];
 
   function rowHtml(r) {
     const cn = r.confirmDays || 1;
+    const star = isFav(r.code) ? `<span class="name-star">★</span>` : "";
     const badge = cn > 1 ? `<span class="stale-badge">T+${cn}</span>` : "";
     const demoTag = r.source === "demo" ? `<span class="demo-badge">演示</span>`
                    : r.source === "manual" ? `<span class="manual-badge">手填</span>` : "";
@@ -2686,9 +2710,9 @@ window.CANDIDATES = [];
     // 「退回」按钮已移除：产品移入精选后无需再在列表里退回（管理页「移动到候选」仍可做此操作）。
     if (state.tab === "candidate") action = `<button class="pass-btn" data-pass="1">通过</button>`;
     const extra = action ? `<span class="pass-wrap">${action}</span>` : "";
-    const bankLabel = (state.heldOnly) ? `<span class="name-bank">${escapeHtml(bankName(r.bank))}</span>` : "";
+    const bankLabel = (state.starOnly || state.heldOnly) ? `<span class="name-bank">${escapeHtml(bankName(r.bank))}</span>` : "";
     return `<tr data-code="${r.code}">
-      <td class="cell-name"><span class="name-wrap"><a class="name-link" href="javascript:void(0)">${r.name}</a>${riskTag}${bankLabel}</span>${demoTag}${extra}</td>
+      <td class="cell-name"><span class="name-wrap"><a class="name-link" href="javascript:void(0)">${r.name}</a>${riskTag}${bankLabel}</span>${star}${demoTag}${extra}</td>
       <td><span class="nav-date">${fmt.date(r.navDate)}${badge}</span></td>
       <td class="col-navsrc">${(state.srcRefreshing && state.srcRefreshing.has((r.code || "").toUpperCase()))
         ? "" /* 本轮刷新中：先清除来源显示，抓到后由本轮结束重绘恢复 */
@@ -2727,7 +2751,9 @@ window.CANDIDATES = [];
 
   /* ---------- 表格 ---------- */
   function applyStarModeUI() {
+    const table = $("#ptable"); if (table) table.classList.toggle("star-rows", state.starOnly);
     const hero = document.querySelector(".hero"); if (hero) {
+      hero.classList.toggle("star-hidden", state.starOnly);
       hero.classList.toggle("held-hidden", state.heldOnly);
     }
   }
@@ -2742,8 +2768,9 @@ window.CANDIDATES = [];
       // 已退回候选的产品在此被排除，改由下面 toCandRows() 带着原银行归属进入候选
       let rows = candRowsAll().filter(r => !activeCodes.has(r.code) && !isToCand(r.code));
       rows = rows.concat(toCandRows());
-      if (state.bank && state.bank !== "all" && !state.heldOnly) rows = rows.filter(r => r.bank === state.bank);
-      if (state.q) { const q = state.q.toLowerCase(); rows = rows.filter(r => (r.name + " " + r.code + " " + r.manager).toLowerCase().includes(q)); }
+      if (state.bank && state.bank !== "all" && !state.starOnly && !state.heldOnly) rows = rows.filter(r => r.bank === state.bank);
+      if (state.q && !state.starOnly) { const q = state.q.toLowerCase(); rows = rows.filter(r => (r.name + " " + r.code + " " + r.manager).toLowerCase().includes(q)); }
+      if (state.starOnly) rows = rows.filter(r => isFav(r.code));
       if (state.heldOnly) rows = rows.filter(r => isCodeHeld(r.code));
       rows = sortRows(rows);
       state.rows = rows;
@@ -2756,26 +2783,28 @@ window.CANDIDATES = [];
       return;
     }
     const data = Engine.products({
-      bank: (state.heldOnly) ? "all" : state.bank, tab: (state.heldOnly) ? "all" : state.tab,
-      sort: state.sort, order: state.order, q: state.q,
+      bank: (state.starOnly || state.heldOnly) ? "all" : state.bank, tab: (state.starOnly || state.heldOnly) ? "all" : state.tab,
+      sort: state.sort, order: state.order, q: state.starOnly ? "" : state.q,
     });
     state.rows = data;
     state.lastRefresh = Engine.lastRefresh();
     state.holidays = Engine.HOLIDAYS;
     // 已退回候选、以及在候选里已删除的产品，都不属于精选
-    let rows = state.rows.filter(r => (!state.heldOnly || isCodeHeld(r.code)))
+    let rows = state.rows.filter(r => (!state.starOnly || isFav(r.code)) && (!state.heldOnly || isCodeHeld(r.code)))
       .filter(r => !isToCand(r.code));
     // 关键修复：必须对合并列表重新排序，否则刚变动的产品会停在最后一行、表头排序对其无效。
     rows = sortRows(rows);
     state.listRows = rows; // 批量刷新队列用：与页面渲染完全一致的最终行集（过滤+已通过候选+当前排序）
     // 刷新完成消息（含用时）优先：切走再返回该银行时保持「N/N 个产品 • 用时 Xs • 更新于 ...」，不被静态文案覆盖。
-    // heldOnly（持仓）为跨银行视图，不适用银行维度消息，显示对应静态文案。
-    const _prevMsg = !state.heldOnly && state.bankRefreshMsg && (state.bankRefreshMsg[state.bank] || state.bankRefreshMsg["_all_"]);
+    // starOnly（收藏）/ heldOnly（持仓）均为跨银行视图，不适用银行维度消息，显示对应静态文案。
+    const _prevMsg = !state.starOnly && !state.heldOnly && state.bankRefreshMsg && (state.bankRefreshMsg[state.bank] || state.bankRefreshMsg["_all_"]);
     state.footDefault = _prevMsg
       ? _prevMsg
       : (state.heldOnly
         ? `共 ${rows.length} 个持仓产品（不分银行）· 点击产品名查看详情`
-        : `共 ${rows.length} 个产品 · 更新于 ${state.lastRefresh} · 点击产品名查看详情`);
+        : (state.starOnly
+          ? `共 ${rows.length} 个收藏产品（不分银行）· 点击产品名查看详情`
+          : `共 ${rows.length} 个产品 · 更新于 ${state.lastRefresh} · 点击产品名查看详情`));
     setFootMsg();
     if (!rows.length) { tbody.innerHTML = ""; $("#emptyTip").classList.remove("hidden"); return; }
     $("#emptyTip").classList.add("hidden");
@@ -2868,6 +2897,10 @@ window.CANDIDATES = [];
     $("#dY3m").innerHTML = fmt.pct(r.y3m);
     $("#dY1y").innerHTML = fmt.pct(r.y1y);
     $("#dSince").innerHTML = fmt.pct(r.since);
+    // ★ 收藏按钮状态同步：已收藏 / 收藏
+    const pill = $("#btnStarDetail");
+    pill.classList.toggle("on", isFav(code));
+    pill.querySelector("span").textContent = isFav(code) ? "已收藏" : "收藏";
     // ¥加持仓 → ¥已持仓：根据本地持仓（有成交）判定
     updateHoldPill(code);
     const real = d.mode === "real";
@@ -3165,6 +3198,7 @@ window.CANDIDATES = [];
 
   function mgRowHtml(r, isCand) {
     const cn = r.confirmDays || 1;
+    const star = isFav(r.code) ? `<span class="name-star">★</span>` : "";
     const badge = cn > 1 ? `<span class="stale-badge">T+${cn}</span>` : "";
     const demoTag = r.source === "demo" ? `<span class="demo-badge">演示</span>`
                    : r.source === "manual" ? `<span class="manual-badge">手填</span>` : "";
@@ -3174,7 +3208,7 @@ window.CANDIDATES = [];
       : (/^R[1-5]$/.test(r.risk || "") ? `<span class="risk-badge ${r.risk.toLowerCase()}">${r.risk}</span>` : "");
     return `<tr data-code="${r.code}">
       <td class="col-check"><input type="checkbox" class="mg-check" value="${r.code}"></td>
-      <td class="cell-name"><span class="name-wrap"><a class="name-link" href="javascript:void(0)">${r.name}</a>${riskTag}</span>${demoTag}</td>
+      <td class="cell-name"><span class="name-wrap"><a class="name-link" href="javascript:void(0)">${r.name}</a>${riskTag}</span>${star}${demoTag}</td>
       <td><span class="nav-date">${fmt.date(r.navDate)}</span>${badge}</td>
       <td class="col-quota">${quotaCellHtml(r)}</td>
       <td>${r.zeroDays30}/${r.negDays30}</td>
@@ -4977,7 +5011,7 @@ window.CANDIDATES = [];
   // 为什么要按视图而不是固定 state.bank：跨银行视图下刷新队列横跨多家银行，若仍按 state.bank
   // 清理/重建，就会漏掉其它银行的产品（残留旧来源、旧额度，指标行不重算）。
   function currentScopeCodes() {
-    if (state.heldOnly) {
+    if (state.starOnly || state.heldOnly) {
       const s = new Set();
       for (const r of (state.listRows || state.rows || [])) {
         const c = (r.code || "").trim().toUpperCase();
@@ -5199,6 +5233,14 @@ window.CANDIDATES = [];
     renderTable();      // 列表额度列同步
   });
   $("#btnRefreshDetail").addEventListener("click", () => refreshSingleProduct(state.drawerCode));
+
+  $("#btnStarDetail").addEventListener("click", () => {
+    if (!state.drawerCode) return;
+    toggleFav(state.drawerCode);
+    openDrawer(state.drawerCode);
+    renderTable();
+    toast(isFav(state.drawerCode) ? "已加入收藏" : "已取消收藏");
+  });
   // 主页脚注行「刷新」：按当前排序刷新当前银行每个产品的净值（进行中再点 = 中断上一轮并重刷当前银行）
   $("#btnRefreshNav").addEventListener("click", () => refreshBankNav());
   $("#btnRefreshQuota").addEventListener("click", () => refreshBankQuota());
@@ -5301,6 +5343,13 @@ window.CANDIDATES = [];
     } catch (e) { console.error("[clearBankQuota] err", e); }
   }
 
+  $("#btnStar").addEventListener("click", function () {
+    // 与「持有」按钮互斥：开启收藏时关闭持仓，反之亦然
+    if (state.heldOnly) { state.heldOnly = false; const hb = $("#btnHeld"); if (hb) hb.classList.remove("active"); }
+    state.starOnly = !state.starOnly;
+    this.classList.toggle("active", state.starOnly);
+    renderTable();
+  });
   $("#btnHeld").addEventListener("click", async function () {
     if (!HELD_CODES && !HELD_FAILED) {
       toast("正在读取持仓…");
@@ -5308,6 +5357,8 @@ window.CANDIDATES = [];
     }
     if (HELD_FAILED || !HELD_CODES) { toast("持仓数据仅在本地服务（serve.mjs）可用"); return; }
     if (HELD_CODES.size === 0) { toast("你还没有持有任何产品"); return; }
+    // 与「收藏」按钮互斥：开启持仓时关闭收藏，反之亦然
+    if (state.starOnly) { state.starOnly = false; const sb = $("#btnStar"); if (sb) sb.classList.remove("active"); }
     state.heldOnly = !state.heldOnly;
     this.classList.toggle("active", state.heldOnly);
     renderTable();
@@ -5467,7 +5518,9 @@ window.CANDIDATES = [];
 
   $("#btnExport").addEventListener("click", () => {
     const data = Engine.exportData();
-    // 已退回候选(toCand)是前端本地状态，不在 Engine 注册表里，导出时一并备份
+    // 收藏/已退回候选(toCand)都是前端本地状态，不在 Engine 注册表里，导出时一并备份，
+    // 否则恢复备份后会丢掉这些偏好。
+    data.favs = state.favs.slice();
     data.toCand = state.toCand.slice();
     const blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
     const a = document.createElement("a");
@@ -5475,7 +5528,7 @@ window.CANDIDATES = [];
     a.download = "products-backup.json";
     a.click();
     URL.revokeObjectURL(a.href);
-    toast("已导出备份");
+    toast(`已导出备份（含 ${data.favs.length} 个收藏）`);
   });
 
   $("#btnImport").addEventListener("click", () => $("#fImport").click());
@@ -5488,9 +5541,11 @@ window.CANDIDATES = [];
       try { data = JSON.parse(fr.result); } catch (_) { toast("文件格式不正确"); return; }
       if (!confirm("导入会覆盖当前自定义配置（原配置自动备份），继续？")) return;
       const d = Engine.importData(data);
-      // 只恢复备份文件里真正存在的 toCand 字段：旧版备份不含该键时，保持本地现状不被清空
+      // 只恢复备份文件里真正存在的字段：旧版备份不含这些键时，保持本地现状不被清空
+      if (Array.isArray(data.favs)) { state.favs = data.favs.slice(); }
       if (Array.isArray(data.toCand)) { state.toCand = data.toCand.slice(); }
       try {
+        localStorage.setItem("observer_favs", JSON.stringify(state.favs));
         localStorage.setItem("observer_tocand", JSON.stringify(state.toCand));
       } catch (e) {}
       afterManage(d);
