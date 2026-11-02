@@ -1806,8 +1806,6 @@ window.MULTI_REAL = window.MULTI_REAL || {};
         if (_obj[code]) { delete _obj[code]; localStorage.setItem(_lk, JSON.stringify(_obj)); }
       }
     } catch (e) {}
-    // 同步从「退回候选」标记移除，避免残留
-    if (state.toCand.indexOf(code) >= 0) { state.toCand = state.toCand.filter(c => c !== code); persistToCand(); }
     saveReg(); build();
     return { ok: true, message: "已删除" };
   }
