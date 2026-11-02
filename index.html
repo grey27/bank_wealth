@@ -228,6 +228,8 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
    见「状态条左侧按钮组」注释块。2026-10-14：改为蓝底白字 + flex 定间距。 */
 .col-quota { min-width: calc(60px * var(--fs)); width: calc(60px * var(--fs)); white-space: nowrap; }
 .col-quota .quota-tag { margin-left: 0; }
+/* 持有年化率（2026-11-02）：从个人台账最早买入确认日起的年化收益率，非持有产品显示 -- */
+.col-heldann { min-width: calc(78px * var(--fs)); width: calc(78px * var(--fs)); white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
 /* 新增 5 列（2026-10-13）：登记编码 / 持有期 / 风险 / 成立日期 / 业绩比较基准 */
 .ptable .col-reg { font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* 业绩比较基准列宽：30 字（用户 2026-10-29 要求）。基准内容已剪短到 ≤150 字，
@@ -822,6 +824,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
         <th class="col-est" data-key="established">成立日期</th>
         <th class="col-bench" data-key="benchmark">业绩比较基准</th>
         <th class="col-quota" data-key="quota">额度</th>
+        <th class="col-heldann" data-key="heldAnn">持有年化率</th>
         <th data-key="zeroDays30">月0/-</th>
         <th data-key="dailyWan">万收</th>
         <th data-key="y7">7日年化</th>
@@ -1004,6 +1007,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
             <th class="col-name" data-mgkey="name">名称</th>
             <th data-mgkey="navDate">净值日</th>
             <th class="col-quota" data-mgkey="quota">额度</th>
+            <th class="col-heldann" data-mgkey="heldAnn">持有年化率</th>
             <th data-mgkey="zeroDays30">月0/-</th>
             <th data-mgkey="dailyWan">万收</th>
             <th data-mgkey="y7">7日年化</th>
@@ -2036,6 +2040,7 @@ window.CANDIDATES = [];
   let HELD_CODES = null;   // Set<product_code> 已建持仓且有成交；null 表示尚未加载 / 加载失败
   let HELD_FAILED = false;
   let HELD_LOADING = false;
+  let HELD_INFO = null;    // Map<product_code, {buys:[{date,nav,shares}], productId, productName}> 持仓多笔买入；用于「持有年化率（份额加权整体）」列
   async function loadHeldCodes(force) {
     if (HELD_LOADING) return HELD_CODES;
     if (HELD_CODES && !HELD_FAILED && !force) return HELD_CODES;
@@ -2047,18 +2052,36 @@ window.CANDIDATES = [];
       const list = (sd && Array.isArray(sd.holdings)) ? sd.holdings : [];
       const held = list.filter(x => Array.isArray(x.trades) && x.trades.length > 0);
       const codes = new Set();
+      const info = {};
       if (held.length) {
         const pl = await fetch("/api/products/latest?limit=500");
         if (!pl.ok) throw new Error("products/latest " + pl.status);
         const prods = await pl.json().catch(() => []);
         const map = {};
         (Array.isArray(prods) ? prods : []).forEach(p => { if (p.product_id != null) map[String(p.product_id)] = p.product_code || p.sale_code; });
-        held.forEach(x => { const c = map[String(x.productId)]; if (c) codes.add(c); });
+        held.forEach(x => {
+          const c = map[String(x.productId)];
+          if (!c) return;
+          codes.add(c);
+          // 持有年化率（份额加权整体）：收集每笔「买入」成交的份额 + 确认日 + 确认净值（缺失则回落当天序列净值）。
+          const buysRaw = (x.trades || [])
+            .filter(t => t.type === "buy" && t.confirmDate && Number(t.shares) > 0)
+            .sort((a, b) => (a.confirmDate < b.confirmDate ? -1 : a.confirmDate > b.confirmDate ? 1 : 0));
+          if (!buysRaw.length) return;
+          const buys = buysRaw.map(t => ({
+            date: t.confirmDate,
+            nav: (t.confirmNav != null && Number(t.confirmNav) > 0) ? Number(t.confirmNav) : null,
+            shares: Number(t.shares),
+          }));
+          info[c] = { buys, productId: String(x.productId), productName: x.productName || "" };
+        });
       }
       HELD_CODES = codes;
+      HELD_INFO = info;
       HELD_FAILED = false;
     } catch (e) {
       HELD_CODES = null;
+      HELD_INFO = null;
       HELD_FAILED = true;
     } finally {
       HELD_LOADING = false;
@@ -2066,6 +2089,52 @@ window.CANDIDATES = [];
     return HELD_CODES;
   }
   function isCodeHeld(code) { return !!(HELD_CODES && HELD_CODES.has(code)); }
+  // 持有年化率（份额加权整体持仓年化）：
+  // 对每笔买入份额，按「最新净值 / 买入净值 - 1」算该笔收益，并以份额为权重求整体总收益；
+  // 持有天数按份额加权平均，再用 (1+总收益)^(365/加权天数)-1 年化。
+  // 单一买入时退化为该笔的年化（与历史口径一致）。买入净值缺失则回落到确认日（含）后首个有估值日序列净值。
+  function heldAnnRate(code) {
+    const info = HELD_INFO && HELD_INFO[code];
+    if (!info || !info.buys || !info.buys.length) return null;
+    const daily = (Engine && Engine.dailyOf) ? Engine.dailyOf(code) : [];
+    if (!daily || !daily.length) return null;
+    const last = daily[daily.length - 1];
+    const latestDate = last.date, latestNav = last.nav;
+    if (!latestNav || latestNav <= 0) return null;
+    let totalCost = 0, totalValue = 0, wDays = 0, wShares = 0, earliest = null;
+    for (const b of info.buys) {
+      const q = b.shares;
+      if (!(q > 0)) continue;
+      let nav = b.nav;
+      if (!nav || nav <= 0) {
+        const s = daily.find(p => p.date >= b.date && p.v === 1);
+        if (!s || !s.nav || s.nav <= 0) continue;
+        nav = s.nav;
+      }
+      const d1 = Date.parse(b.date + "T00:00:00Z");
+      const d2 = Date.parse(latestDate + "T00:00:00Z");
+      const days = Math.round((d2 - d1) / 86400000);
+      if (days <= 0) continue;                 // 买入日不早于最新净值日，无法年化（仍计入成本/市值但不参与周期加权）
+      totalCost += q * nav;
+      totalValue += q * latestNav;
+      wDays += q * days;
+      wShares += q;
+      if (!earliest || b.date < earliest) earliest = b.date;
+    }
+    if (!(totalCost > 0) || !(wShares > 0)) return null;
+    const totalRet = totalValue / totalCost - 1;  // 整体持仓总收益率（小数）
+    const avgDays = wDays / wShares;              // 份额加权平均持有天数
+    if (!(avgDays > 0)) return null;
+    const ann = (Math.pow(1 + totalRet, 365 / avgDays) - 1) * 100;
+    return {
+      ann: Math.round(ann * 100) / 100,
+      totalRetPct: Math.round(totalRet * 10000) / 100,
+      avgDays: Math.round(avgDays),
+      startDate: earliest,
+      latestDate,
+      shares: Math.round(wShares * 100) / 100,
+    };
+  }
 
   /* ---------- 银行标签 ---------- */
   // 各银行产品数：跟随当前 tab（精选 = 种子 + 已通过候选；候选 = 候选池去重后），按银行分组
@@ -2340,6 +2409,14 @@ window.CANDIDATES = [];
         if (na == null) return 1;
         if (nb == null) return -1;
         return (na - nb) * ord;
+      }
+      if (k === "heldAnn") {
+        // 持有年化率（份额加权整体）：对象取 .ann；未持仓（null）恒排末尾
+        const va = a.heldAnn ? a.heldAnn.ann : null, vb = b.heldAnn ? b.heldAnn.ann : null;
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        return (va - vb) * ord;
       }
       // 泛型列：纯数字（万收/年化/持有天数/数值类）走数值比较；登记编码、风险、成立日期、
       // 业绩比较基准等字符串列走 localeCompare；空值（null/--/""）恒排末尾。
@@ -2736,6 +2813,7 @@ window.CANDIDATES = [];
       <td class="col-quota">${(state.srcRefreshing && state.srcRefreshing.has((r.code || "").toUpperCase()))
         ? "" /* 本轮刷新中：先清除额度显示，抓到后由本轮结束重绘恢复（与「刷新来源」列一致） */
         : quotaCellHtml(r)}</td>
+      <td class="col-heldann"${r.heldAnn ? ` title="份额加权整体持仓年化｜总收益 ${r.heldAnn.totalRetPct}%｜加权持有 ${r.heldAnn.avgDays} 天｜起点 ${r.heldAnn.startDate}"` : ""}>${r.heldAnn ? fmt.pct(r.heldAnn.ann) : '<span class="val-zero">--</span>'}</td>
       <td>${r.zeroDays30}/${r.negDays30}</td>
       <td>${fmt.wan(r.dailyWan)}</td>
       <td>${fmt.pct(r.y7)}</td>
@@ -2772,6 +2850,7 @@ window.CANDIDATES = [];
       if (state.q && !state.starOnly) { const q = state.q.toLowerCase(); rows = rows.filter(r => (r.name + " " + r.code + " " + r.manager).toLowerCase().includes(q)); }
       if (state.starOnly) rows = rows.filter(r => isFav(r.code));
       if (state.heldOnly) rows = rows.filter(r => isCodeHeld(r.code));
+      rows.forEach(r => { r.heldAnn = heldAnnRate(r.code); });
       rows = sortRows(rows);
       state.rows = rows;
       state.listRows = rows; // 批量刷新队列用：与页面渲染完全一致的最终行集
@@ -2793,6 +2872,7 @@ window.CANDIDATES = [];
     let rows = state.rows.filter(r => (!state.starOnly || isFav(r.code)) && (!state.heldOnly || isCodeHeld(r.code)))
       .filter(r => !isToCand(r.code));
     // 关键修复：必须对合并列表重新排序，否则刚变动的产品会停在最后一行、表头排序对其无效。
+    rows.forEach(r => { r.heldAnn = heldAnnRate(r.code); });
     rows = sortRows(rows);
     state.listRows = rows; // 批量刷新队列用：与页面渲染完全一致的最终行集（过滤+已通过候选+当前排序）
     // 刷新完成消息（含用时）优先：切走再返回该银行时保持「N/N 个产品 • 用时 Xs • 更新于 ...」，不被静态文案覆盖。
@@ -3211,6 +3291,7 @@ window.CANDIDATES = [];
       <td class="cell-name"><span class="name-wrap"><a class="name-link" href="javascript:void(0)">${r.name}</a>${riskTag}</span>${star}${demoTag}</td>
       <td><span class="nav-date">${fmt.date(r.navDate)}</span>${badge}</td>
       <td class="col-quota">${quotaCellHtml(r)}</td>
+      <td class="col-heldann"${r.heldAnn ? ` title="份额加权整体持仓年化｜总收益 ${r.heldAnn.totalRetPct}%｜加权持有 ${r.heldAnn.avgDays} 天｜起点 ${r.heldAnn.startDate}"` : ""}>${r.heldAnn ? fmt.pct(r.heldAnn.ann) : '<span class="val-zero">--</span>'}</td>
       <td>${r.zeroDays30}/${r.negDays30}</td>
       <td>${fmt.wan(r.dailyWan)}</td>
       <td>${fmt.pct(r.y7)}</td>
@@ -3229,6 +3310,13 @@ window.CANDIDATES = [];
     if (!k) return rows;
     return rows.slice().sort((a, b) => {
       if (k === "name") return String(a.name || "").localeCompare(String(b.name || ""), "zh") * ord;
+      if (k === "heldAnn") {   // 持有年化率（份额加权整体）：对象取 .ann；未持仓（null）恒排末尾
+        const va = a.heldAnn ? a.heldAnn.ann : null, vb = b.heldAnn ? b.heldAnn.ann : null;
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        return (va - vb) * ord;
+      }
       let x = Number(a[k]), y = Number(b[k]);
       x = (x == null || isNaN(x)) ? -Infinity : x;
       y = (y == null || isNaN(y)) ? -Infinity : y;
@@ -3272,6 +3360,7 @@ window.CANDIDATES = [];
         sort: state.mgSort || "dailyWan", order: state.mgOrder, q: state.q || "",
       }).filter(r => !isToCand(r.code));
     }
+    rows.forEach(r => { r.heldAnn = heldAnnRate(r.code); });
     rows = mgSortRows(rows);
     const box = $("#mgList");
     const empty = $("#mgEmpty");
@@ -3927,7 +4016,7 @@ window.CANDIDATES = [];
   // 抓净值时发行银行不按 code 调 /api/predict 预判，改由本参数透传后端按 MANAGER_TO_KEY
   // （口径同 predict 规则 JSON 的 manager_to_parent_key）换算成发行银行 key；仅添加新产品
   // （lookupProduct）时产品尚未入列、无此行内字段，才走 /api/predict 预判。
-  function fetchProductUnified(code, issuer, agent, deadlineAt, name, regCode, infoComplete, benchmark, benchmarkKnown, mode, manager, force, since) {
+  function fetchProductUnified(code, issuer, agent, deadlineAt, name, regCode, infoComplete, benchmark, benchmarkKnown, mode, manager, force, since, fmInternalCode) {
     // —— 偏好银行标记（首次双抓定标后持久化；以后只抓该银行，不再试另一家）——
     let preferBank = null;
     try { const pm = JSON.parse(localStorage.getItem("observer_prefer_bank") || "{}"); preferBank = pm[code] || null; } catch (e) {}
@@ -3962,6 +4051,8 @@ window.CANDIDATES = [];
       // 由后端缺省 "all"。
       (mode ? "&mode=" + encodeURIComponent(mode) : "") +
       (since ? "&since=" + encodeURIComponent(since) : "") +
+      // 2026-11-02 用户规则：富民内部产品码（DX…）回传后端，跳过静态映射表 + 30min 目录缓存。
+      (fmInternalCode ? "&fmInternalCode=" + encodeURIComponent(fmInternalCode) : "") +
       (force ? "&noCache=1" : "");
     const t0 = (typeof performance !== "undefined") ? performance.now() : Date.now();
     // /api/product 的净值主路径为银行/发行方接口（本地由本机 IP 直连，线上走 Cloudflare），
@@ -4075,6 +4166,9 @@ window.CANDIDATES = [];
       navIncremental: !!(nav && nav.navIncremental),
       // 双来源明细（2026-10-25）：后端 fetchProductFull 回 navSources 时原样带出
       navSources: (Array.isArray(pr.navSources) && pr.navSources.length > 1) ? pr.navSources : null,
+      // 2026-11-02 用户规则：富民内部产品码（DX…）随 /api/product 返回，落库供刷新时回传、跳过静态表/目录缓存。
+      // 仅 fminbank 来源才有意义——其它银行回传的 navViaCode 是产品代码本身（非内部码），不采纳。
+      fmInternalCode: (pr.navVia === "fminbank" && nav && nav.navViaCode) ? nav.navViaCode : null,
     };
   }
 
@@ -4531,6 +4625,8 @@ window.CANDIDATES = [];
       benchmarkFull: (info.benchmark != null) ? info.benchmark
         : (prev && (prev.benchmarkFull || prev.benchmark) ? (prev.benchmarkFull || prev.benchmark) : null),
       regCode: (info.regCode != null) ? info.regCode : (prev && prev.regCode != null ? prev.regCode : null),
+      // 2026-11-02 用户规则：富民内部产品码（DX…）——fminbank 本轮实际提供才更新，否则保留上一次落库值。
+      fmInternalCode: (res.fmInternalCode) ? res.fmInternalCode : ((prev && prev.fmInternalCode) || null),
       established: (info.established != null) ? info.established : (prev && prev.established != null ? prev.established : null),
       navVia: __skip ? ((prev && prev.navVia) || null) : (res.navVia || (prev && prev.navVia) || null),
       navPort: __skip ? ((prev && prev.navPort) != null ? prev.navPort : null)
@@ -4614,6 +4710,8 @@ window.CANDIDATES = [];
     // （后端 issuer/manager 置空 → baseBanks 为空 → 直奔 chinawealthNav(regCode)，按登记编码精确命中）。
     const _realReg = (window.MULTI_REAL && window.MULTI_REAL[code] && window.MULTI_REAL[code].regCode) || null;
     const _useReg = regCode || _realReg || null;
+    // 2026-11-02 用户规则：富民内部产品码（DX…）已落库则回传后端，跳过静态映射表 + 30min 目录缓存。
+    const _realFmCode = (window.MULTI_REAL && window.MULTI_REAL[code] && window.MULTI_REAL[code].fmInternalCode) || null;
     // 光大识别：优先用发行机构字段 mgrName，缺失时回退产品名 name（网商+光大产品名必含「光大理财」）。
     // 双保险，确保「网商代销的光大份额」稳定命中中国理财网直连，绝不漏判去走光大银行自身接口。
     const _mgrOrName = (mgrName || name || "");
@@ -4648,7 +4746,7 @@ window.CANDIDATES = [];
       const _ex = (window.MULTI_REAL && window.MULTI_REAL[code] && window.MULTI_REAL[code].series) || [];
       if (_ex.length && _ex[_ex.length - 1][0]) _since = String(_ex[_ex.length - 1][0]);
     } catch (e) {}
-    const pr = await fetchProductUnified(code, _effIss, ag, Date.now() + _cwBudget, name || null, _useReg, infoComplete, storedBench, benchKnown, mode, _effMgr, force, _since).catch(() => null);
+    const pr = await fetchProductUnified(code, _effIss, ag, Date.now() + _cwBudget, name || null, _useReg, infoComplete, storedBench, benchKnown, mode, _effMgr, force, _since, _realFmCode).catch(() => null);
     if (!pr) return false;
     const res = normalizeProductApi(pr);
     if (!res) return false;

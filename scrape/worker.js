@@ -306,7 +306,7 @@ const UPSTREAM_TIMEOUT_MS = 25000;
 const CACHE_TTL_SEC = 6 * 60 * 60;
 
 // /api/fetch 返回结构版本号。改动返回字段时 +1（v1→v2→…），让旧结构缓存立即失效。
-const CACHE_VERSION = "v38"; // v38：**线上 /api/predict 启用**——RULES_JSON_URL 由空串改为 https://lclist.github.io/predict-rules.json（仓库根 predict-rules.json，与本地 predict_bank.js 同一份 v4 规则）。此前线上 /api/predict 恒返 503「predict unavailable」→ 前端回退「仅查下拉框单家」，与本地「预判发行行→下拉框代销行→预判其它发行行→预判其它代销行→剩余行」的有序多银行尝试不一致；现两端口径统一。规则 JSON 用 ASCII 文件名以避开中文路径的百分号编码差异。  // v37：**份额码桥接改为「码优先」** —— 原实现只按产品名检索信披平台取份额码，且打分把「名称完全相同(90)」排在「代码数字体一致(80)」之前；工银·鑫悦打新策略优选最短持有90天混合类开放在平台上有 **4 个同名产品**（subShare 26H6066A/26H6399F/26H6055C/26H6060H，净值各异），名检索可能命中**另一个产品**的份额码 → 拿它去工行官网查 → 把别的产品净值当本产品入库，来源还显示「工商银行官网」（比抓不到更坏）。现三层修复：① 份额码桥接**优先按登记编码**取本产品的份额族（xplRegToShareFamily，全程不碰产品名）；② 名检索剔除「同形不同数」的异产品行（xplForeignCode：字母骨架折叠重复字母后相同、而数字体不同 ⇒ 必属不同产品；同一产品的各份额码数字体恒相同）；③ 推导出的份额码再过一遍同形校验，不合则拒绝采用。  // v36：中国理财网(xpl)熔断器根治——原实现「模块级全局熔断 + 单次握手失败即熔 10 分钟 + 窗口内绝不做试探」，而 XPL_CIRCUIT 在 Cloudflare Workers 里是**同一 isolate 内所有请求共享**的模块级变量 → 任何一次握手抖动都会让该 isolate 上随后 10 分钟内所有产品的中国理财网兜底全部 0ms 秒返 null → 全站该通道集体「未抓到」（实测 5 个互不相关产品同时 404、兜底阶段均 0ms null）。现改为：①按请求计数（xplFetch 内部 2 次 attempt 只算 1 次失败）+ 连续失败 ≥2 次才熔断；②窗口分级递增(30s→60s→…→10min)；③窗口内每 20s 放行单个半开探测，上游恢复即全站立即恢复；④握手失败不写负缓存（原实现对「握手失败」与「查无此产品」一律写 60s null → 恢复后还要再等 60s）。 // v35：bosc web 端口裸 ded[0][0] 崩溃守卫——增量(since)空序列或 geo 拦截返回空时干净 return null，不再 TypeError 强制回落中国理财网(及其 503 风险)；同批 xpl 净值查询 503 作废会话重试一次(绕同会话连续调用限流) // v34：份额码桥接冗余短路——解析出份额码===渠道码时跳过发行行③重查(省~1.5s)；新增 SHARE_EQ_CHANNEL 白名单(WPBK24M0501T)使 ② 名检索 0ms // v33：nav 响应新增 regCode/navShare 透传；补录光大 D 份额 XPL_SHARE_REG（EW6729D/EW7829D）跳过份额码桥接 // v32：404「未抓到」响应**带上 timings 时间分解**（即便 nav/info 全空也回传已采集的分阶段耗时，前端不再一片空白，便于定位哪条链没跑通）；另修复「缺 issuer 时仅凭 manager 推导发行行」使网商代销品(agent=mybank、注册表仅含 manager)线上也能路由到发行方端口——此前线上 Worker 缺该推导、baseBanks 为空直奔中国理财网又因无产品名查不到 → 404 无 timings；v31：**招银理财官网(cmbwm)日期口径修正为北京时间**——官网 navDate 原始毫秒时间戳是「北京时间当日零点」（如 2026-10-29 零点 = 2026-10-28T16:00:00Z），旧实现用 toISOString() 取 UTC 日期 → 整体早一天（实测 132112D 末点标 10-28、实际 10-29）。三重独立源交叉验证：官网标签+1天 vs 中国理财网 117/117 完全一致、vs 招行超市 CSV 112/112 一致、vs 本地 cgb/app 46/46 一致；且旧标签的星期分布「周五 0 个」是日期错位的铁证。另①增量模式 0 新增点不再当失败丢弃（本地 404 的第二重原因）②命中 cmbwm 后跳过份额码桥接（cmb 腿不认 shareCode，桥接=白跑一次无头 Chrome，多烧 12.5s）③cmb 发行腿预算 3s→26s（cmbwm 走无头 Chrome+SM2 加密，冷启动 15~25s，3s 会整条掐断）④前端新增 cmb/cmbwm→「招银理财官网」标签映射；v30：招银理财官网腿加**总预算**（CMBWM_TIMEOUT_MS=45s，页面就绪总时限 40s）——该腿要走无头 Chrome(SM2 加密)，冷启动 20~40s，不封顶会单腿烧光编排层 60s 前端预算（实测本地「抓取失败 60.0s / 时间分解无子项」）；现超预算快速失败，编排层继续走其它腿；v29：新增招银理财官网端口（cmbwm，www.cmbchinawm.com）——cfweb 超市腿对**已下架**产品返空（实测 132112D/MS/N 三兄弟份额 body=0、PB132112D 代销码也空）→这类产品抓不到；而招银理财官网作为发行方信披渠道，下架后仍保留历史净值与详情（用户实证 132112D 官网可见净值），实测本机 1.1s 拿到 118 点(末点 2026-10-28/1.0177，与官网一致)、三兄弟份额净值各不相同(D=1.0177/N=1.0173/MS=1.0178，份额族护栏有效)。该端口必须走无头 Chrome：请求体 SM2 加密(vm.SmAencrypt，公钥与算法在 660KB 混淆 bundle 里)，且 /web/api/* 有地域封禁须走 /prod-api 前缀 → 见 scrape/cmbwm_app.mjs；Cloudflare Workers 无 Chrome 故线上恒返 null（走原有 cfweb/xpl 链）。v28：中国理财网**旧站**(wechatSearch/cwReq)独立熔断——与 xpl 新站是两套风控，旧站握手超时(25s)同样白等；现握手失败即记熔断，后续旧站名检索秒返；v27：中国理财网(xpl)熔断补全到 xplNameToReg/xplProductDetail 两条旁路——它们直接调 xplInit 握手、不走 xplFetch，故首笔仍白等 20s+（截图里「份额码桥接 21.3s」即此）；现握手失败即记熔断，后续名检索/详情直查全部秒返；v26：广发(cgb)三腿加「本机不可达熔断」——本机 IP 被封时(广发主站 403 静态拦截页；wap.cgbchina.com.cn 与 www.cgbwmc.com.cn TCP 层不通；中国理财网握手被风控)三腿各自白等 20s+6s+42s，单只产品 50s 爆掉前端 60s 预算 → 全部「未抓到」；现①广发 App 会话超时(6s短探测)→熔断10分钟②广银理财官网探针超时→熔断10分钟(区分「超时」与「查无此产品」，后者不熔断)③中国理财网握手失败→熔断10分钟；成功即自动清零恢复。另登记招银理财招睿添利日开21号兄弟份额 132112D/N/MS → Z7001626000062（三者净值各不相同，实测 D=1.0177/N=1.0173/MS=1.0178）；v25：宁银(nbcb) nav 模式新增 App 腿(aapw 移动端网关 newFinaChart.do)——宁银理财官网只收录自营产品，跨行代销品(667468WS 招银理财代销/用户手机 H5 可见净值)官网腿恒 null→整条腿失败→回落中国理财网(本机 IP 风控→42s 超时)→抓不到；新腿支持增量(startIssDate 下推 since+1 + 客户端 d>since 双保险)，0 新增点用 detail 做存在性判定(=已在架=已是最新，算成功带 navIncremental)；v24：中国理财网家族（份额码名检索+净值兜底）加**总预算**（锚 T0+50s）——本机 IP 被风控时两段串起来 64s>前端 60s 预算→前端掐断→时间分解全空；且 XPL_SHARE_REG 已登记的码**跳过名检索**直接用登记份额码（省 21s 白等）；v23：单点采纳排除 BANK_ONE_NAV（网商/微银等只回单点的银行必须继续走中国理财网兜底，其单点无历史价值）；v22：增量模式下银行腿跑通但只回单点时也采纳（navLegOkCtx）——官网历史净值接口被 WAF 拦时只剩详情里的最新净值（真实单位净值，按日期并集不丢历史），不放行会被拒→触发 20s+份额码桥接+40s中国理财网兜底→拖满 60s 前端预算→「抓取失败」（实测交银 5811221111：本地 63s 未抓到/线上 1.7s 拿到）；全量模式不放行（单点会顶掉完整历史）；单点值≈1 不放行（防误判现金类）；v21：修复招行(cm b→cmb)增量腿漏返回 navIncremental —— 增量腿只回 0~1 个新增点时被 navLegOk 拒 → 回落中国理财网全量兜底（14~46s、来源被改写为 chinawealth），前端又因 nav.navIncremental 缺失把「0 新增点」判成「未抓到」（招行 5 只全未抓到）；带上后：接口跑通即放行，0 新增点=「已是最新」（前端判成功、历史不丢）。v20：建信理财纳入 FAST_WEB_NAV_BANKS；
+const CACHE_VERSION = "v39"; // v39：**nav 响应新增 navViaCode（富民内部产品码 DX…）回传**——落库后刷新走短路；旧 v38 缓存无此字段，必须失效。另 /api/product 新增 fmInternalCode 入参 + fmResolveCode 四级降级（已落库内部码→DX直查→静态表→目录名匹配）。  // v38：**线上 /api/predict 启用**——RULES_JSON_URL 由空串改为 https://lclist.github.io/predict-rules.json（仓库根 predict-rules.json，与本地 predict_bank.js 同一份 v4 规则）。此前线上 /api/predict 恒返 503「predict unavailable」→ 前端回退「仅查下拉框单家」，与本地「预判发行行→下拉框代销行→预判其它发行行→预判其它代销行→剩余行」的有序多银行尝试不一致；现两端口径统一。规则 JSON 用 ASCII 文件名以避开中文路径的百分号编码差异。  // v37：**份额码桥接改为「码优先」** —— 原实现只按产品名检索信披平台取份额码，且打分把「名称完全相同(90)」排在「代码数字体一致(80)」之前；工银·鑫悦打新策略优选最短持有90天混合类开放在平台上有 **4 个同名产品**（subShare 26H6066A/26H6399F/26H6055C/26H6060H，净值各异），名检索可能命中**另一个产品**的份额码 → 拿它去工行官网查 → 把别的产品净值当本产品入库，来源还显示「工商银行官网」（比抓不到更坏）。现三层修复：① 份额码桥接**优先按登记编码**取本产品的份额族（xplRegToShareFamily，全程不碰产品名）；② 名检索剔除「同形不同数」的异产品行（xplForeignCode：字母骨架折叠重复字母后相同、而数字体不同 ⇒ 必属不同产品；同一产品的各份额码数字体恒相同）；③ 推导出的份额码再过一遍同形校验，不合则拒绝采用。  // v36：中国理财网(xpl)熔断器根治——原实现「模块级全局熔断 + 单次握手失败即熔 10 分钟 + 窗口内绝不做试探」，而 XPL_CIRCUIT 在 Cloudflare Workers 里是**同一 isolate 内所有请求共享**的模块级变量 → 任何一次握手抖动都会让该 isolate 上随后 10 分钟内所有产品的中国理财网兜底全部 0ms 秒返 null → 全站该通道集体「未抓到」（实测 5 个互不相关产品同时 404、兜底阶段均 0ms null）。现改为：①按请求计数（xplFetch 内部 2 次 attempt 只算 1 次失败）+ 连续失败 ≥2 次才熔断；②窗口分级递增(30s→60s→…→10min)；③窗口内每 20s 放行单个半开探测，上游恢复即全站立即恢复；④握手失败不写负缓存（原实现对「握手失败」与「查无此产品」一律写 60s null → 恢复后还要再等 60s）。 // v35：bosc web 端口裸 ded[0][0] 崩溃守卫——增量(since)空序列或 geo 拦截返回空时干净 return null，不再 TypeError 强制回落中国理财网(及其 503 风险)；同批 xpl 净值查询 503 作废会话重试一次(绕同会话连续调用限流) // v34：份额码桥接冗余短路——解析出份额码===渠道码时跳过发行行③重查(省~1.5s)；新增 SHARE_EQ_CHANNEL 白名单(WPBK24M0501T)使 ② 名检索 0ms // v33：nav 响应新增 regCode/navShare 透传；补录光大 D 份额 XPL_SHARE_REG（EW6729D/EW7829D）跳过份额码桥接 // v32：404「未抓到」响应**带上 timings 时间分解**（即便 nav/info 全空也回传已采集的分阶段耗时，前端不再一片空白，便于定位哪条链没跑通）；另修复「缺 issuer 时仅凭 manager 推导发行行」使网商代销品(agent=mybank、注册表仅含 manager)线上也能路由到发行方端口——此前线上 Worker 缺该推导、baseBanks 为空直奔中国理财网又因无产品名查不到 → 404 无 timings；v31：**招银理财官网(cmbwm)日期口径修正为北京时间**——官网 navDate 原始毫秒时间戳是「北京时间当日零点」（如 2026-10-29 零点 = 2026-10-28T16:00:00Z），旧实现用 toISOString() 取 UTC 日期 → 整体早一天（实测 132112D 末点标 10-28、实际 10-29）。三重独立源交叉验证：官网标签+1天 vs 中国理财网 117/117 完全一致、vs 招行超市 CSV 112/112 一致、vs 本地 cgb/app 46/46 一致；且旧标签的星期分布「周五 0 个」是日期错位的铁证。另①增量模式 0 新增点不再当失败丢弃（本地 404 的第二重原因）②命中 cmbwm 后跳过份额码桥接（cmb 腿不认 shareCode，桥接=白跑一次无头 Chrome，多烧 12.5s）③cmb 发行腿预算 3s→26s（cmbwm 走无头 Chrome+SM2 加密，冷启动 15~25s，3s 会整条掐断）④前端新增 cmb/cmbwm→「招银理财官网」标签映射；v30：招银理财官网腿加**总预算**（CMBWM_TIMEOUT_MS=45s，页面就绪总时限 40s）——该腿要走无头 Chrome(SM2 加密)，冷启动 20~40s，不封顶会单腿烧光编排层 60s 前端预算（实测本地「抓取失败 60.0s / 时间分解无子项」）；现超预算快速失败，编排层继续走其它腿；v29：新增招银理财官网端口（cmbwm，www.cmbchinawm.com）——cfweb 超市腿对**已下架**产品返空（实测 132112D/MS/N 三兄弟份额 body=0、PB132112D 代销码也空）→这类产品抓不到；而招银理财官网作为发行方信披渠道，下架后仍保留历史净值与详情（用户实证 132112D 官网可见净值），实测本机 1.1s 拿到 118 点(末点 2026-10-28/1.0177，与官网一致)、三兄弟份额净值各不相同(D=1.0177/N=1.0173/MS=1.0178，份额族护栏有效)。该端口必须走无头 Chrome：请求体 SM2 加密(vm.SmAencrypt，公钥与算法在 660KB 混淆 bundle 里)，且 /web/api/* 有地域封禁须走 /prod-api 前缀 → 见 scrape/cmbwm_app.mjs；Cloudflare Workers 无 Chrome 故线上恒返 null（走原有 cfweb/xpl 链）。v28：中国理财网**旧站**(wechatSearch/cwReq)独立熔断——与 xpl 新站是两套风控，旧站握手超时(25s)同样白等；现握手失败即记熔断，后续旧站名检索秒返；v27：中国理财网(xpl)熔断补全到 xplNameToReg/xplProductDetail 两条旁路——它们直接调 xplInit 握手、不走 xplFetch，故首笔仍白等 20s+（截图里「份额码桥接 21.3s」即此）；现握手失败即记熔断，后续名检索/详情直查全部秒返；v26：广发(cgb)三腿加「本机不可达熔断」——本机 IP 被封时(广发主站 403 静态拦截页；wap.cgbchina.com.cn 与 www.cgbwmc.com.cn TCP 层不通；中国理财网握手被风控)三腿各自白等 20s+6s+42s，单只产品 50s 爆掉前端 60s 预算 → 全部「未抓到」；现①广发 App 会话超时(6s短探测)→熔断10分钟②广银理财官网探针超时→熔断10分钟(区分「超时」与「查无此产品」，后者不熔断)③中国理财网握手失败→熔断10分钟；成功即自动清零恢复。另登记招银理财招睿添利日开21号兄弟份额 132112D/N/MS → Z7001626000062（三者净值各不相同，实测 D=1.0177/N=1.0173/MS=1.0178）；v25：宁银(nbcb) nav 模式新增 App 腿(aapw 移动端网关 newFinaChart.do)——宁银理财官网只收录自营产品，跨行代销品(667468WS 招银理财代销/用户手机 H5 可见净值)官网腿恒 null→整条腿失败→回落中国理财网(本机 IP 风控→42s 超时)→抓不到；新腿支持增量(startIssDate 下推 since+1 + 客户端 d>since 双保险)，0 新增点用 detail 做存在性判定(=已在架=已是最新，算成功带 navIncremental)；v24：中国理财网家族（份额码名检索+净值兜底）加**总预算**（锚 T0+50s）——本机 IP 被风控时两段串起来 64s>前端 60s 预算→前端掐断→时间分解全空；且 XPL_SHARE_REG 已登记的码**跳过名检索**直接用登记份额码（省 21s 白等）；v23：单点采纳排除 BANK_ONE_NAV（网商/微银等只回单点的银行必须继续走中国理财网兜底，其单点无历史价值）；v22：增量模式下银行腿跑通但只回单点时也采纳（navLegOkCtx）——官网历史净值接口被 WAF 拦时只剩详情里的最新净值（真实单位净值，按日期并集不丢历史），不放行会被拒→触发 20s+份额码桥接+40s中国理财网兜底→拖满 60s 前端预算→「抓取失败」（实测交银 5811221111：本地 63s 未抓到/线上 1.7s 拿到）；全量模式不放行（单点会顶掉完整历史）；单点值≈1 不放行（防误判现金类）；v21：修复招行(cm b→cmb)增量腿漏返回 navIncremental —— 增量腿只回 0~1 个新增点时被 navLegOk 拒 → 回落中国理财网全量兜底（14~46s、来源被改写为 chinawealth），前端又因 nav.navIncremental 缺失把「0 新增点」判成「未抓到」（招行 5 只全未抓到）；带上后：接口跑通即放行，0 新增点=「已是最新」（前端判成功、历史不丢）。v20：建信理财纳入 FAST_WEB_NAV_BANKS；
 
 /* 分页参数 —— 这两个值是被 Cloudflare Workers 的「子请求配额」倒推出来的，别随手调大。
  *
@@ -3283,6 +3283,8 @@ export async function fetchProductFull(code, opts = {}) {
     ...(nameHint ? { name: nameHint } : {}),
     ...(opts.manager ? { manager: opts.manager } : {}),
     ...(opts.regCode ? { regCode: opts.regCode } : {}),
+    // 2026-11-02 用户规则：富民内部产品码（DX…）回传透传，供 fmResolveCode 优先短路。
+    ...(opts.fmInternalCode ? { fmInternalCode: opts.fmInternalCode } : {}),
     ...((b === "boc" && opts.summaryComplete)
       ? { summaryComplete: true, sName: opts.sName, sRegCode: opts.sRegCode, sRisk: opts.sRisk, sBenchmark: opts.sBenchmark }
       : {}),
@@ -3521,6 +3523,8 @@ export async function fetchProductFull(code, opts = {}) {
       ...(opts.name ? { name: opts.name } : {}),
       ...(opts.manager ? { manager: opts.manager } : {}),
       ...(opts.regCode ? { regCode: opts.regCode } : {}),
+      // 2026-11-02 用户规则：富民内部产品码（DX…）回传透传，供 fmResolveCode 优先短路。
+      ...(opts.fmInternalCode ? { fmInternalCode: opts.fmInternalCode } : {}),
       ...((b === "boc" && opts.summaryComplete)
         ? { summaryComplete: true, sName: opts.sName, sRegCode: opts.sRegCode, sRisk: opts.sRisk, sBenchmark: opts.sBenchmark }
         : {}),
@@ -4063,7 +4067,7 @@ export async function fetchProductFull(code, opts = {}) {
     isCash: isCash || undefined,              // 银行直连识别到现金管理类（OPEN_TYPE=6/XJL 等）→ 前端从源头拦截
     navVia: retNav ? navVia : null,           // 净值实际来源：发行银行key / 代销银行key / "chinawealth"
     navPort: retNav ? navPort : null,         // 实际命中端口：app / web / null(中国理财网)；配合 navVia 前端渲染「银行+端口」
-    nav: retNav && nav ? { series: nav.series, kind: nav.kind || "nav", navBasis: nav.navBasis || "nav", source: navVia, navIncremental: !!nav.navIncremental, regCode: nav.regCode || null, navShare: nav.navShare || null } : null,
+    nav: retNav && nav ? { series: nav.series, kind: nav.kind || "nav", navBasis: nav.navBasis || "nav", source: navVia, navIncremental: !!nav.navIncremental, regCode: nav.regCode || null, navShare: nav.navShare || null, navViaCode: nav.navViaCode || null } : null,
     // 双来源明细（仅 appFirst 并发双抓且两家都拿到全序列时非空）：
     // [{bank, port, points, lastDate, lastNav}]，主来源（=navVia）排第一。
     // 前端「净值来源」列据此同时显示两家（用户 2026-10-25 要求「2 个都写」）。
@@ -8131,10 +8135,14 @@ function fmNormName(s) {
   return String(s || "").replace(/\s+/g, "").replace(/（/g, "(").replace(/）/g, ")").replace(/[·・]/g, "");
 }
 
-// 内部 product_no 解析（三级降级：DX 直查 → 静态映射表 → 目录名匹配；见文件头注释）
-async function fmResolveCode(code, name, transport) {
+// 内部 product_no 解析（四级降级：已存内部码 → DX 直查 → 静态映射表 → 目录名匹配；见文件头注释）
+// 2026-11-02 用户规则：第 1 级为「数据库已落库的 fmInternalCode（DX…）」——添加产品/首次抓取时富民
+//   回传内部码，前端存盘；之后刷新直接用它，跳过静态映射表 + 30min 排行榜目录缓存请求。
+async function fmResolveCode(code, name, transport, fmInternalCode) {
   const c = String(code || "").trim().toUpperCase();
   if (!c) return null;
+  // 2026-11-02 用户规则：已落库的内部产品码（DX…）优先直接采用，跳过静态映射表 + 30min 目录缓存。
+  if (fmInternalCode && String(fmInternalCode).trim().toUpperCase().startsWith("DX")) return String(fmInternalCode).trim().toUpperCase();
   if (c.startsWith("DX")) return c;                   // 已是富民内部码
   if (FMBANK_CODE_MAP[c]) return FMBANK_CODE_MAP[c];  // 静态映射表（登记编码/销售代码双键）
   if (!name) return null;
@@ -8167,24 +8175,31 @@ async function fminbankAppFetch(code, opts = {}) {
   if (!c) return null;
   const transport = opts.transport;
   const t0 = Date.now();
-  const pno = await fmResolveCode(c, opts.name, transport);
+  const pno = await fmResolveCode(c, opts.name, transport, opts.fmInternalCode);
   if (!pno) {
     navLog("fminbank app code=" + c + " name=" + (opts.name || "-") + " -> 内部码映射未命中 (" + (Date.now() - t0) + "ms)");
     return null;
   }
   // 【2026-10-23 用户规则】刷信息只刷信息、刷额度只刷额度——两者都不抓净值。
   // 富民 App 端口三接口解耦：detail（信息+额度 residual_amount）/ netList（净值全量）/ achieve（成立日）。
-  // info → detail + achieve（成立日属信息）；quota → 只 detail。
+  // info → detail + achieve（成立日属信息）；quota → 只 detail；nav → 只 netList。
+  // 2026-11-02 用户规则：nav 模式只抓净值，不调 detail（name/regCode/risk/quota）与 achieve（成立日），
+  //   这两类字段一律用数据库已存的 opts.name / opts.regCode（extraOf 已从 registry 透传），不回源富民接口。
+  //   唯一仍要解析的是「内部产品码 pno」（靠 FMBANK_CODE_MAP 静态表/缓存目录，零网络或 30min 缓存），
+  //   因为 netList 接口只认 pno；但这属于「码解析」而非「探测名字/登记编码」。
   const __mode = opts.mode || "all";
   const __noNav = __mode === "info" || __mode === "quota";
-  // 详情 + 净值 + 历史业绩三并发（业绩仅用于补成立日，失败不致命）
+  const __navMode = __mode === "nav";
+  // 详情 + 净值 + 历史业绩三并发（业绩仅用于补成立日，失败不致命）；nav 模式只发净值(netList)。
   const [det, net, ach] = await Promise.all([
-    fmCall(FMBANK_API_DETAIL, { client_serial_no: fmSerial(), product_no: pno, channel_no: FMBANK_CHANNEL_NO }, transport),
+    __navMode ? Promise.resolve(null) : fmCall(FMBANK_API_DETAIL, { client_serial_no: fmSerial(), product_no: pno, channel_no: FMBANK_CHANNEL_NO }, transport),
     __noNav ? Promise.resolve(null) : fmCall(FMBANK_API_NETLIST, { client_serial_no: fmSerial(), product_no: pno, channel_no: FMBANK_CHANNEL_NO }, transport),
-    __mode === "quota" ? Promise.resolve(null) : fmCall(FMBANK_API_ACHIEVE, { params: { client_serial_no: fmSerial() }, product_no: pno }, transport),
+    (__navMode || __mode === "quota") ? Promise.resolve(null) : fmCall(FMBANK_API_ACHIEVE, { params: { client_serial_no: fmSerial() }, product_no: pno }, transport),
   ]);
   const d = (det && det.body && typeof det.body === "object") ? det.body : null;
-  if (!d) {
+  // nav 模式不依赖详情：详情缺失（d 为空）但净值仍在，继续往下走；
+  // 非 nav 模式详情缺失则视为抓取失败（无身份、无净值源）。
+  if (!d && !__navMode) {
     navLog("fminbank app pno=" + pno + " -> 详情失败 (" + (Date.now() - t0) + "ms)");
     return null;
   }
@@ -8199,10 +8214,12 @@ async function fminbankAppFetch(code, opts = {}) {
   series.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   const first = series.length ? series[0] : null;
   const last = series.length ? series[series.length - 1] : null;
-  const name = d.product_name || d.product_short_name || null;
-  const risk = /^R[1-9]$/.test(String(d.risk_level || "")) ? String(d.risk_level) : null;
-  const benchmark = d.performance_benchmark || null;
-  const regCode = d.product_register_code || null;
+  // nav 模式 d 为空：name/regCode 回退数据库已存值（opts.name / opts.regCode，extraOf 已透传）；
+  // 非 nav 模式 d 为详情，优先用富民权威字段，缺失才回退库值。
+  const name = d ? (d.product_name || d.product_short_name || null) : (opts.name || null);
+  const risk = d ? (/^R[1-9]$/.test(String(d.risk_level || "")) ? String(d.risk_level) : null) : null;
+  const benchmark = d ? (d.performance_benchmark || null) : null;
+  const regCode = d ? (d.product_register_code || null) : (opts.regCode || null);
   // 成立日：历史业绩「成立以来」档的 yield_start_date（如 20250905）；缺位退序列首点
   let established = null, establishedFromSeries = true;
   const achList = (ach && ach.body && Array.isArray(ach.body.list)) ? ach.body.list : [];
@@ -8222,19 +8239,24 @@ async function fminbankAppFetch(code, opts = {}) {
     const m = String(name || "").match(/最短持有\s*(\d+)\s*天|(\d+)\s*天持有/);
     if (m) holdDays = Number(m[1] || m[2]);
   }
-  // 额度：剩余额度 residual_amount（元）+ 产品总额 product_total + 起购 single_min_buy
-  const residual = Number(d.residual_amount);
-  const total = Number(d.product_total);
-  const minFirst = Number(d.single_min_buy);
+  // 额度/规模/起购：仅详情(detail)提供，nav 模式不抓 -> 全部为 null（符合「nav 只抓净值」）
   let remainQuota = null, quotaState = null, quotaText = null;
-  if (Number.isFinite(residual)) {
-    remainQuota = residual;
-    quotaState = residual > 0 ? "available" : "sold_out";
-    quotaText = "剩余额度 " + (residual >= 1e8 ? (residual / 1e8).toFixed(2) + "亿元" : (residual / 1e4).toFixed(2) + "万元");
+  let scale = null, minFirstAmount = null;
+  if (d) {
+    const residual = Number(d.residual_amount);
+    const total = Number(d.product_total);
+    const minFirst = Number(d.single_min_buy);
+    if (Number.isFinite(residual)) {
+      remainQuota = residual;
+      quotaState = residual > 0 ? "available" : "sold_out";
+      quotaText = "剩余额度 " + (residual >= 1e8 ? (residual / 1e8).toFixed(2) + "亿元" : (residual / 1e4).toFixed(2) + "万元");
+    }
+    scale = Number.isFinite(total) && total > 0 ? total : null;
+    minFirstAmount = Number.isFinite(minFirst) && minFirst > 0 ? minFirst : null;
   }
   // 管理人：端口自带的 product_manager 是权威口径（含 inferManager 提示表外的徽银理财等），
   // 直接采用；仅缺失时按名称推断。
-  const manager = d.product_manager ? String(d.product_manager) : (name ? inferManager(name) : null);
+  const manager = d && d.product_manager ? String(d.product_manager) : (name ? inferManager(name) : null);
   navLog("fminbank app pno=" + pno + " -> nav=" + (last ? last[1] : "-") + "@" + (last ? last[0] : "-")
     + " series=" + series.length + " name=" + (name || "-") + " (" + (Date.now() - t0) + "ms)");
   return {
@@ -8256,8 +8278,8 @@ async function fminbankAppFetch(code, opts = {}) {
     remainQuota, remainQuotaPct: null,
     saleStatus: null, currency: "CNY",
     quotaState, quotaText,
-    scale: Number.isFinite(total) && total > 0 ? total : null,
-    minFirstAmount: Number.isFinite(minFirst) && minFirst > 0 ? minFirst : null,
+    scale,
+    minFirstAmount,
     infoOnly: series.length < 2,
   };
 }
@@ -14649,6 +14671,8 @@ export default {
       const manager = (url.searchParams.get("manager") || "").trim();
       const name = (url.searchParams.get("name") || "").trim();
       const regCode = (url.searchParams.get("regCode") || "").trim().toUpperCase();
+      // 2026-11-02 用户规则：富民内部产品码（DX…）落库后刷新时回传，跳过静态映射表 + 30min 目录缓存。
+      const fmInternalCode = (url.searchParams.get("fmInternalCode") || "").trim().toUpperCase();
       const infoComplete = url.searchParams.get("infoComplete") === "1";
       // 业绩比较基准本地缓存复用：前端在「已查过（含空白）」的产品刷新时透传，后端据此跳过中国理财网/银行重查
       const benchmark = url.searchParams.has("benchmark") ? (url.searchParams.get("benchmark") || "") : null;
@@ -14691,7 +14715,7 @@ export default {
         // 农行、招行 SM4、交银等）在线上全变成无 body 的 GET，上游一律判失败，
         // 表现为 /api/product 404 not found 而本地 serve（nodeTransport 支持 init）正常。
         // 对照组已实证：Workers 出网到 open.fbank.com 正常（383ms 拿回密文），故障纯在本次传参。
-        const result = await fetchProductFull(code, { issuer, agent, manager, name, regCode, infoComplete, benchmark, benchmarkKnown, transport: (p, init) => fetch(p, init), preferBank: preferBank || null, summaryComplete, sName, sRegCode, sRisk, sBenchmark, since: since || undefined, mode, noCache });
+        const result = await fetchProductFull(code, { issuer, agent, manager, name, regCode, infoComplete, benchmark, benchmarkKnown, transport: (p, init) => fetch(p, init), preferBank: preferBank || null, summaryComplete, sName, sRegCode, sRisk, sBenchmark, since: since || undefined, mode, noCache, fmInternalCode: fmInternalCode || undefined });
         if (result && (result.nav || result.info || result.benchmark || result.quota != null)) {
           const resp = jsonResponse(result, 200, {
             "Cache-Control": "public, max-age=" + CACHE_TTL_SEC,
