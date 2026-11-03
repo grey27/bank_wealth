@@ -259,7 +259,7 @@ const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/6
 const TIMEOUT_MS = 20000;
 
 let cookieJar = [];
-async function postJson(act, bodyObj, transport) {
+async function postJson(act, bodyObj, transport, jar) {
   const fetcher = transport || fetch;
   const body = JSON.stringify(bodyObj);
   const headers = {
@@ -267,7 +267,8 @@ async function postJson(act, bodyObj, transport) {
     "User-Agent": UA,
     "Accept": "application/json, text/plain, */*",
   };
-  if (cookieJar.length) headers["Cookie"] = cookieJar.join("; ");
+  const _jar = jar || cookieJar;   // jar 缺省时回落模块级（仅本机单线程调试）
+  if (_jar.length) headers["Cookie"] = _jar.join("; ");
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
@@ -278,7 +279,7 @@ async function postJson(act, bodyObj, transport) {
       signal: ctrl.signal,
     });
     const sc = res.headers.getSetCookie ? res.headers.getSetCookie() : (res.headers.get("set-cookie") ? [res.headers.get("set-cookie")] : []);
-    if (sc && sc.length) cookieJar = sc.map((c) => c.split(";")[0]);
+    if (sc && sc.length) { if (jar) jar.length = 0, sc.forEach((c) => jar.push(c.split(";")[0])); else cookieJar = sc.map((c) => c.split(";")[0]); }
     const txt = await res.text();
     return txt;
   } finally {
@@ -289,8 +290,11 @@ async function postJson(act, bodyObj, transport) {
 // ① 握手 + 建会话：取服务端 RSA 公钥 → 生成随机 dataKey → 返回加解密器。
 // 2026-10-25 从 citicDirectNav 内抽出复用（额度接口 citicDirectQuota 也要走同一套信封）。
 async function citicSession(transport) {
+  // 【2026-11-02】每次调用独立的 cookie jar：模块级 jar 在 Workers 同 isolate 并发下会被互相覆盖
+  //   （A 请求的 Cookie 被 B 请求带上 → 会话串了 → PENFHNLC 返回空 → 历史序列丢失）。
+  const jar = [];
   let hsTxt;
-  try { hsTxt = await postJson("PEMBPKQY", { ISWEBENCRYPY: "1" }, transport); }
+  try { hsTxt = await postJson("PEMBPKQY", { ISWEBENCRYPY: "1" }, transport, jar); }
   catch (e) { return null; }
   let hs;
   try { hs = JSON.parse(hsTxt).dataPackage.business; hs = JSON.parse(hs); }
@@ -320,7 +324,7 @@ async function citicSession(transport) {
     if (!biz) return null;
     try { return JSON.parse(biz); } catch (e) { return null; }
   }
-  return { smEncrypt, decodeBiz };
+  return { smEncrypt, decodeBiz, jar };
 }
 
 async function citicDirectNav(code, opts = {}) {
@@ -333,7 +337,7 @@ async function citicDirectNav(code, opts = {}) {
 
   const sess = await citicSession(transport);
   if (!sess) return null;
-  const { smEncrypt, decodeBiz } = sess;
+  const { smEncrypt, decodeBiz, jar } = sess;
 
   // ② TACODE 反查 + 产品存在性确认（PEMBFIPL 只传 PRDCODE 即可命中）。
   // ⚠ 2026-10-15 坑：AF 系列（慧盈象等）TACODE=YZX 而非码前缀"AF"，旧版硬编码
@@ -343,7 +347,7 @@ async function citicDirectNav(code, opts = {}) {
   let tacode = null;
   let plName = null;
   try {
-    const plTxt = await postJson("PEMBFIPL", smEncrypt({ PRDCODE: c, PRDTYPE: "1", TACODE: "", IPOMODE: "" }), transport);
+const plTxt = await postJson("PEMBFIPL", smEncrypt({ PRDCODE: c, PRDTYPE: "1", TACODE: "", IPOMODE: "" }), transport, jar);
     const pl = decodeBiz(plTxt);
     step("PEMBFIPL", plTxt, pl);
     if (pl && Array.isArray(pl.resultList) && pl.resultList.length) {
@@ -355,12 +359,12 @@ async function citicDirectNav(code, opts = {}) {
   if (!tacode) tacode = c.slice(0, 2); // 历史兼容：EW 等 TACODE==码前缀的产品
 
   // ③ 产品详情（确认确实存在、取名称/风险/最新净值）
-  let detail = decodeBiz(await postJson("PENFPDQR", smEncrypt({ PRDCODE: c, TACODE: tacode }), transport));
+let detail = decodeBiz(await postJson("PENFPDQR", smEncrypt({ PRDCODE: c, TACODE: tacode }), transport, jar));
   step("PENFPDQR", null, detail);
   if (!detail) return null;
   // 保险：反查 TACODE 后详情仍报 PENF045（查询不到）时，用码前缀再试一次
   if (detail.RETCODE === "PENF045" && tacode !== c.slice(0, 2)) {
-    const d2 = decodeBiz(await postJson("PENFPDQR", smEncrypt({ PRDCODE: c, TACODE: c.slice(0, 2) }), transport));
+const d2 = decodeBiz(await postJson("PENFPDQR", smEncrypt({ PRDCODE: c, TACODE: c.slice(0, 2) }), transport, jar));
     if (d2 && d2.RETCODE !== "PENF045") { detail = d2; tacode = c.slice(0, 2); }
   }
   // NAME 为完整名称；PRDNAME 被截断到30字；CONTRACTNAME 仅是合同文件名占位
@@ -375,7 +379,7 @@ async function citicDirectNav(code, opts = {}) {
   const hist = decodeBiz(await postJson("PENFHNLC", smEncrypt({
     LZFLAG: "1", PRDCODE: c, PRDTYPE: "1", TACODE: tacode, ACCOUNTTYPE: "1",
     SECTIONTYPID: "999", QUERYNM: "1500", PAGENM: "0", ORDERFLAG: "0", CROSSFLAG: "", DIVIDFLAG: "1",
-  }), transport));
+  }), transport, jar));
   if (!hist || !Array.isArray(hist.resultList) || !hist.resultList.length) return null;
 
   const series = hist.resultList
@@ -443,7 +447,7 @@ export async function citicDirectQuota(code, opts = {}) {
 
   let pl;
   try {
-    pl = decodeBiz(await postJson("PEMBFIPL", smEncrypt({ PRDCODE: c, PRDTYPE: "1", TACODE: "YZX", IPOMODE: "" }), transport));
+    pl = decodeBiz(await postJson("PEMBFIPL", smEncrypt({ PRDCODE: c, PRDTYPE: "1", TACODE: "YZX", IPOMODE: "" }), transport, jar));
   } catch (e) { return null; }
   const row = (pl && Array.isArray(pl.resultList) && pl.resultList.length) ? pl.resultList[0] : null;
   if (!row) return null; // 中信未代销 / 查无此码

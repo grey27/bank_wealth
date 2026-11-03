@@ -316,7 +316,7 @@ const UPSTREAM_TIMEOUT_MS = 25000;
 const CACHE_TTL_SEC = 6 * 60 * 60;
 
 // /api/fetch 返回结构版本号。改动返回字段时 +1（v1→v2→…），让旧结构缓存立即失效。
-const CACHE_VERSION = "v40"; // v40：**中信 App 端口(citic_direct_nav.mjs)改静态 import 入包** —— 原动态 import(new URL(...,import.meta.url)) 不被 esbuild 解析、模块代码根本没进 bundle，Worker 运行时抛 "Invalid URL string" 被 try/catch 吞掉 → 中信 App 腿在**线上从未真正跑过**（净值抓不到 + quota 恒 null）；另非信银代销产品(如光大 EW7019D)直走 App 端口、manager 不再被臆测成信银理财。  // v39：**nav 响应新增 navViaCode（富民内部产品码 DX…）回传**——落库后刷新走短路；旧 v38 缓存无此字段，必须失效。另 /api/product 新增 fmInternalCode 入参 + fmResolveCode 四级降级（已落库内部码→DX直查→静态表→目录名匹配）。  // v38：**线上 /api/predict 启用**——RULES_JSON_URL 由空串改为 https://lclist.github.io/predict-rules.json（仓库根 predict-rules.json，与本地 predict_bank.js 同一份 v4 规则）。此前线上 /api/predict 恒返 503「predict unavailable」→ 前端回退「仅查下拉框单家」，与本地「预判发行行→下拉框代销行→预判其它发行行→预判其它代销行→剩余行」的有序多银行尝试不一致；现两端口径统一。规则 JSON 用 ASCII 文件名以避开中文路径的百分号编码差异。  // v37：**份额码桥接改为「码优先」** —— 原实现只按产品名检索信披平台取份额码，且打分把「名称完全相同(90)」排在「代码数字体一致(80)」之前；工银·鑫悦打新策略优选最短持有90天混合类开放在平台上有 **4 个同名产品**（subShare 26H6066A/26H6399F/26H6055C/26H6060H，净值各异），名检索可能命中**另一个产品**的份额码 → 拿它去工行官网查 → 把别的产品净值当本产品入库，来源还显示「工商银行官网」（比抓不到更坏）。现三层修复：① 份额码桥接**优先按登记编码**取本产品的份额族（xplRegToShareFamily，全程不碰产品名）；② 名检索剔除「同形不同数」的异产品行（xplForeignCode：字母骨架折叠重复字母后相同、而数字体不同 ⇒ 必属不同产品；同一产品的各份额码数字体恒相同）；③ 推导出的份额码再过一遍同形校验，不合则拒绝采用。  // v36：中国理财网(xpl)熔断器根治——原实现「模块级全局熔断 + 单次握手失败即熔 10 分钟 + 窗口内绝不做试探」，而 XPL_CIRCUIT 在 Cloudflare Workers 里是**同一 isolate 内所有请求共享**的模块级变量 → 任何一次握手抖动都会让该 isolate 上随后 10 分钟内所有产品的中国理财网兜底全部 0ms 秒返 null → 全站该通道集体「未抓到」（实测 5 个互不相关产品同时 404、兜底阶段均 0ms null）。现改为：①按请求计数（xplFetch 内部 2 次 attempt 只算 1 次失败）+ 连续失败 ≥2 次才熔断；②窗口分级递增(30s→60s→…→10min)；③窗口内每 20s 放行单个半开探测，上游恢复即全站立即恢复；④握手失败不写负缓存（原实现对「握手失败」与「查无此产品」一律写 60s null → 恢复后还要再等 60s）。 // v35：bosc web 端口裸 ded[0][0] 崩溃守卫——增量(since)空序列或 geo 拦截返回空时干净 return null，不再 TypeError 强制回落中国理财网(及其 503 风险)；同批 xpl 净值查询 503 作废会话重试一次(绕同会话连续调用限流) // v34：份额码桥接冗余短路——解析出份额码===渠道码时跳过发行行③重查(省~1.5s)；新增 SHARE_EQ_CHANNEL 白名单(WPBK24M0501T)使 ② 名检索 0ms // v33：nav 响应新增 regCode/navShare 透传；补录光大 D 份额 XPL_SHARE_REG（EW6729D/EW7829D）跳过份额码桥接 // v32：404「未抓到」响应**带上 timings 时间分解**（即便 nav/info 全空也回传已采集的分阶段耗时，前端不再一片空白，便于定位哪条链没跑通）；另修复「缺 issuer 时仅凭 manager 推导发行行」使网商代销品(agent=mybank、注册表仅含 manager)线上也能路由到发行方端口——此前线上 Worker 缺该推导、baseBanks 为空直奔中国理财网又因无产品名查不到 → 404 无 timings；v31：**招银理财官网(cmbwm)日期口径修正为北京时间**——官网 navDate 原始毫秒时间戳是「北京时间当日零点」（如 2026-10-29 零点 = 2026-10-28T16:00:00Z），旧实现用 toISOString() 取 UTC 日期 → 整体早一天（实测 132112D 末点标 10-28、实际 10-29）。三重独立源交叉验证：官网标签+1天 vs 中国理财网 117/117 完全一致、vs 招行超市 CSV 112/112 一致、vs 本地 cgb/app 46/46 一致；且旧标签的星期分布「周五 0 个」是日期错位的铁证。另①增量模式 0 新增点不再当失败丢弃（本地 404 的第二重原因）②命中 cmbwm 后跳过份额码桥接（cmb 腿不认 shareCode，桥接=白跑一次无头 Chrome，多烧 12.5s）③cmb 发行腿预算 3s→26s（cmbwm 走无头 Chrome+SM2 加密，冷启动 15~25s，3s 会整条掐断）④前端新增 cmb/cmbwm→「招银理财官网」标签映射；v30：招银理财官网腿加**总预算**（CMBWM_TIMEOUT_MS=45s，页面就绪总时限 40s）——该腿要走无头 Chrome(SM2 加密)，冷启动 20~40s，不封顶会单腿烧光编排层 60s 前端预算（实测本地「抓取失败 60.0s / 时间分解无子项」）；现超预算快速失败，编排层继续走其它腿；v29：新增招银理财官网端口（cmbwm，www.cmbchinawm.com）——cfweb 超市腿对**已下架**产品返空（实测 132112D/MS/N 三兄弟份额 body=0、PB132112D 代销码也空）→这类产品抓不到；而招银理财官网作为发行方信披渠道，下架后仍保留历史净值与详情（用户实证 132112D 官网可见净值），实测本机 1.1s 拿到 118 点(末点 2026-10-28/1.0177，与官网一致)、三兄弟份额净值各不相同(D=1.0177/N=1.0173/MS=1.0178，份额族护栏有效)。该端口必须走无头 Chrome：请求体 SM2 加密(vm.SmAencrypt，公钥与算法在 660KB 混淆 bundle 里)，且 /web/api/* 有地域封禁须走 /prod-api 前缀 → 见 scrape/cmbwm_app.mjs；Cloudflare Workers 无 Chrome 故线上恒返 null（走原有 cfweb/xpl 链）。v28：中国理财网**旧站**(wechatSearch/cwReq)独立熔断——与 xpl 新站是两套风控，旧站握手超时(25s)同样白等；现握手失败即记熔断，后续旧站名检索秒返；v27：中国理财网(xpl)熔断补全到 xplNameToReg/xplProductDetail 两条旁路——它们直接调 xplInit 握手、不走 xplFetch，故首笔仍白等 20s+（截图里「份额码桥接 21.3s」即此）；现握手失败即记熔断，后续名检索/详情直查全部秒返；v26：广发(cgb)三腿加「本机不可达熔断」——本机 IP 被封时(广发主站 403 静态拦截页；wap.cgbchina.com.cn 与 www.cgbwmc.com.cn TCP 层不通；中国理财网握手被风控)三腿各自白等 20s+6s+42s，单只产品 50s 爆掉前端 60s 预算 → 全部「未抓到」；现①广发 App 会话超时(6s短探测)→熔断10分钟②广银理财官网探针超时→熔断10分钟(区分「超时」与「查无此产品」，后者不熔断)③中国理财网握手失败→熔断10分钟；成功即自动清零恢复。另登记招银理财招睿添利日开21号兄弟份额 132112D/N/MS → Z7001626000062（三者净值各不相同，实测 D=1.0177/N=1.0173/MS=1.0178）；v25：宁银(nbcb) nav 模式新增 App 腿(aapw 移动端网关 newFinaChart.do)——宁银理财官网只收录自营产品，跨行代销品(667468WS 招银理财代销/用户手机 H5 可见净值)官网腿恒 null→整条腿失败→回落中国理财网(本机 IP 风控→42s 超时)→抓不到；新腿支持增量(startIssDate 下推 since+1 + 客户端 d>since 双保险)，0 新增点用 detail 做存在性判定(=已在架=已是最新，算成功带 navIncremental)；v24：中国理财网家族（份额码名检索+净值兜底）加**总预算**（锚 T0+50s）——本机 IP 被风控时两段串起来 64s>前端 60s 预算→前端掐断→时间分解全空；且 XPL_SHARE_REG 已登记的码**跳过名检索**直接用登记份额码（省 21s 白等）；v23：单点采纳排除 BANK_ONE_NAV（网商/微银等只回单点的银行必须继续走中国理财网兜底，其单点无历史价值）；v22：增量模式下银行腿跑通但只回单点时也采纳（navLegOkCtx）——官网历史净值接口被 WAF 拦时只剩详情里的最新净值（真实单位净值，按日期并集不丢历史），不放行会被拒→触发 20s+份额码桥接+40s中国理财网兜底→拖满 60s 前端预算→「抓取失败」（实测交银 5811221111：本地 63s 未抓到/线上 1.7s 拿到）；全量模式不放行（单点会顶掉完整历史）；单点值≈1 不放行（防误判现金类）；v21：修复招行(cm b→cmb)增量腿漏返回 navIncremental —— 增量腿只回 0~1 个新增点时被 navLegOk 拒 → 回落中国理财网全量兜底（14~46s、来源被改写为 chinawealth），前端又因 nav.navIncremental 缺失把「0 新增点」判成「未抓到」（招行 5 只全未抓到）；带上后：接口跑通即放行，0 新增点=「已是最新」（前端判成功、历史不丢）。v20：建信理财纳入 FAST_WEB_NAV_BANKS；
+const CACHE_VERSION = "v41"; // v41：**新增中信银行官网「代销产品信息查询平台」端口**（etrade.citicbank.com/portalweb/cms/getConsignProdList.htm，JSONP，免登录免签名、不带 Referer 也通）—— 收录中信代销的**全部**产品（含他行发行），提供 taName 发行方权威口径 + 当日单点净值（比信银官网/App 端口都新）+ 风险等级 + 产品状态；历史序列仍由信银官网/App 提供，三端口按日期并集（官网覆盖同日）。  // v40：
 
 /* 分页参数 —— 这两个值是被 Cloudflare Workers 的「子请求配额」倒推出来的，别随手调大。
  *
@@ -6070,6 +6070,110 @@ export async function citicCmsFetch(code, opts = {}) {
   return out;
 }
 
+/* ==========================================================================
+ * 中信银行官网「代销产品信息查询平台」端口（2026-11-02 新增）
+ * ------------------------------------------------------------------------
+ * 页面：https://www.citicbank.com/personal/investment/lcjdxcpxx/proxy/
+ *       （中信银行代销产品信息查询平台，静态页 + jQuery JSONP，无登录）
+ * 接口：https://etrade.citicbank.com/portalweb/cms/getConsignProdList.htm
+ *       GET ?callback=cb&prdCode=<产品代码>&prdName=<产品名称>&pageSize=&currentPage=
+ *       （portalURL 由页面 api.js 定义；接口路径来自页面 option 的 ds_url 属性）
+ * 参数（页面 finProxy.js 的 switch(cpType) 分支，cpType=6=代销理财产品）：
+ *       prdCode（产品代码）/ prdName（产品名称）/ pageSize / currentPage。
+ *       taCode=发行机构代码，页面靠 getCmpSimpList 映射；**按码查时无需传**。
+ *
+ * 响应（JSONP 包 cb(...)）：{ totalCount, pageCount, retCode:"AAAAAAA", content:{ resultList:[{
+ *   taName  发行方（**权威口径**，如「光大理财」「信银理财」）
+ *   prdCode 产品代码 / prdName 产品名称
+ *   nav     最新单位净值（字符串，12 位小数）
+ *   navDate 净值日期（yyyyMMdd）—— **比 App 端口新**（App 慢一个披露日）
+ *   riskLevel 风险等级（"1".."5" → R1..R5；"2"=较低风险）
+ *   status  产品状态（"0"=开放期，其余见页面 cpzt 映射）
+ *   ipoMode 募集方式 / saleArea 销售区域 / cpfl 产品分类 / dePid / prdType
+ * ]}}
+ *
+ * 特性：① 免登录免签名、**不带 Referer 也通**（无 WAF，Worker 可直连）；
+ *       ② **收录中信代销的全部产品**（含他行发行，如光大理财 EW7019D），
+ *          而信银理财官网 web 端口只收信银自家产品 —— 这是本端口的核心价值；
+ *       ③ 单点净值（无历史序列），故只作「末点/发行方/风险等级」补充源，
+ *          历史序列仍走信银官网 web 端口或 App 端口。
+ * ========================================================================== */
+const CITICBANK_WEB_API = "https://etrade.citicbank.com/portalweb/cms/getConsignProdList.htm";
+const CITICBANK_WEB_TIMEOUT_MS = 15000;
+// 官网状态码 → 文案（页面 finProxy.js 的 cpzt 映射，仅列我们用得到的）
+function citicBankStatusText(s) {
+  const m = { "0": "开放期", "1": "停售", "2": "即将开售", "3": "暂停申购", "4": "停止申购", "5": "停止赎回",
+    "6": "权益登记", "7": "红利发放", "8": "产品封闭", "9": "产品终止", a: "预约认购期" };
+  return m[String(s)] || null;
+}
+
+export async function citicBankWebFetch(code, opts = {}) {
+  const transport = opts.transport;
+  const c = String(code || "").trim().toUpperCase();
+  const nm = String(opts.name || "").trim();
+  if (!c && !nm) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), CITICBANK_WEB_TIMEOUT_MS);
+  let txt = null;
+  try {
+    const q = new URLSearchParams();
+    q.set("callback", "cb");
+    if (c) q.set("prdCode", c);
+    if (nm && !c) q.set("prdName", nm);
+    q.set("pageSize", "10");
+    q.set("currentPage", "1");
+    const res = await (transport || fetch)(CITICBANK_WEB_API + "?" + q.toString(), {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36" },
+      signal: ctrl.signal,
+    });
+    txt = await res.text();
+  } catch (e) {
+    clearTimeout(timer);
+    navLog("citicbank 官网查询异常 code=" + c + " -> " + ((e && e.message) || e));
+    return null;
+  }
+  clearTimeout(timer);
+  // 剥 JSONP 包裹：cb({...})
+  const m = String(txt || "").match(/^[^(]*\(([\s\S]*)\)\s*;?\s*$/);
+  let j = null;
+  try { j = JSON.parse(m ? m[1] : txt); } catch (e) { j = null; }
+  if (!j || j.retCode !== "AAAAAAA") {
+    navLog("citicbank 官网查询无结果 code=" + c + " retCode=" + (j && j.retCode));
+    return null;
+  }
+  const list = (j.content && Array.isArray(j.content.resultList)) ? j.content.resultList : [];
+  if (!list.length) {
+    navLog("citicbank 官网查询 resultList 空 code=" + c);
+    return null;
+  }
+  // 按码查时取码完全一致者；按名查时取首条（页面本身也只按名模糊匹配）
+  let row = c ? (list.find((r) => String(r.prdCode || "").toUpperCase() === c) || list[0]) : list[0];
+  if (!row) return null;
+  const navVal = Number(row.nav);
+  const navDate = String(row.navDate || "").trim();
+  const navIso = /^\d{8}$/.test(navDate)
+    ? navDate.slice(0, 4) + "-" + navDate.slice(4, 6) + "-" + navDate.slice(6, 8)
+    : (navDate || null);
+  const riskLv = String(row.riskLevel || "").trim();
+  return {
+    code: c,
+    name: row.prdName || null,
+    manager: row.taName || null,          // 发行方权威口径
+    nav: Number.isFinite(navVal) ? navVal : null,
+    navDate: navIso,
+    risk: /^[1-5]$/.test(riskLv) ? ("R" + riskLv) : null,
+    status: citicBankStatusText(row.status),
+    series: (navIso && Number.isFinite(navVal) && navVal > 0) ? [[navIso, navVal]] : [],
+    kind: "nav",
+    source: "live",
+    bank: "citic",
+    navVia: "citic",
+    navPort: "citicbank-web",
+    navViaCode: c,
+    infoOnly: false,
+  };
+}
+
 export async function citicFetch(code, opts = {}) {
   const transport = opts.transport;
   const c = String(code || "").trim().toUpperCase();
@@ -6119,13 +6223,48 @@ export async function citicFetch(code, opts = {}) {
     } catch (e) { return null; }
   };
   if (_mgrName && !_isCiticOwn && opts.mode === "nav") {
-    const _appNav = await directOnce().catch(() => null);
-    if (_appNav) {
-      _appNav.manager = _mgrName;          // 真实发行方，覆盖端口硬编码，防污染
-      _appNav.navPort = "app";
-      return _appNav;
+    // 【2026-11-02 新增】中信银行官网「代销产品信息查询平台」端口：
+    //   收录中信代销的**全部**产品（含他行发行，如光大 EW7019D），免登录免签名、不带 Referer 也通，
+    //   且 **taName 是发行方权威口径**、navDate 比 App 端口新（官网 11-02 vs App 10-30）。
+    //   但它只给**单点**净值（无历史序列），故：官网取末点 + 发行方 + 风险，App 端口补全历史，再按日期并集。
+    const _web = await citicBankWebFetch(c, { transport, name: opts.name }).catch(() => null);
+    // 【2026-11-02】App 端口偶发失败（PENFHNLC 空响应等）→ 重试一次：
+    //   否则官网单点（1 点）单独成立会被编排层「全量模式单点不放行」规则拒收 → 白抓一次。
+    let _app = await directOnce().catch(() => null);
+    if (!_app) {
+      _app = await directOnce().catch(() => null);
+      if (_app) navLog("citic App 端口重试成功 code=" + c);
     }
-    navLog("citic 非信银代销产品 App 端口未抓到（code=" + c + "）→ 返回 null");
+    if (_web || _app) {
+      const byD = new Map();
+      if (_app && _app.series) for (const [d, v] of _app.series) if (d) byD.set(d, v);
+      if (_web && _web.series) for (const [d, v] of _web.series) if (d) byD.set(d, v); // 官网覆盖同日（更权威）
+      const series = [...byD.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+      if (series.length) {
+        // 【2026-11-02】官网单点单独成立（App 端口两次都失败）：标 navIncremental，
+        //   让编排层在增量模式走单点放行（navLegOkCtx），避免这唯一的新鲜净值被白丢。
+        const _onlyWebPoint = series.length === 1 && !(_app && _app.series && _app.series.length);
+        const base = _app || _web;
+        const last = series[series.length - 1];
+        return {
+          code: c,
+          name: (_web && _web.name) || (base && base.name) || null,
+          // 发行方：官网 taName 优先（权威），其次调用方传入的真实机构名；都无则 null（不臆测）
+          manager: (_web && _web.manager) || _mgrName || null,
+          established: (base && base.established) || series[0][0],
+          series,
+          kind: "nav",
+          risk: (_web && _web.risk) || (base && base.risk) || null,
+          source: "live",
+          bank: "citic",
+          navVia: "citic",
+          navPort: (_web && last[0] === _web.series[_web.series.length - 1][0]) ? "citicbank-web" : "app",
+          navViaCode: c,
+          navIncremental: _onlyWebPoint ? true : undefined,
+        };
+      }
+    }
+    navLog("citic 非信银代销产品 官网+App 端口均未抓到（code=" + c + "）→ 返回 null");
     return null;
   }
 
@@ -6169,9 +6308,11 @@ export async function citicFetch(code, opts = {}) {
   const estD = citicDate8(det && det.firstNavDate);
   const cut3y = new Date(Date.now() - Math.round(3 * 365.25 * 864e5)).toISOString().slice(0, 10);
   const needLong = !estD || estD < cut3y; // 官网 3 年窗口覆盖不到成立以来
+  // 【2026-11-02】中信银行官网代销查询端口并发参与：单点最新净值（比信银官网/App 都新）+ taName 发行方权威口径。
+  const cbwP = citicBankWebFetch(c, { transport, name: opts.name }).catch(() => null);
   const cmsP = det ? citicCmsFetch(c, { transport, __det: det, noCache: opts.noCache }).catch(() => null) : Promise.resolve(null);
   const dirP = needLong ? directOnce() : Promise.resolve(null);
-  const [cms0, dir0] = await Promise.all([cmsP, dirP]);
+  const [cms0, dir0, cbw0] = await Promise.all([cmsP, dirP, cbwP]);
   let cms = cms0;
   let dir = dir0;
   // 官网序列抓空（detail 有、nav 失败）时补一枪直连，别让产品掉成 null
@@ -6181,11 +6322,13 @@ export async function citicFetch(code, opts = {}) {
   // 返回哨兵而非 null：让编排层能下发 isCash（前端提示「现金管理类」），
   // 而不是与「查无此码」混为一种「未抓到」（2026-10-23 审计统一）。
   if (cms && cms.cash) return { _excludedCash: true, code: c };
-  if (!cms && !dir) return null;
+  if (!cms && !dir && !cbw0) return null;
 
   const byDate = new Map();
   if (dir && dir.series) for (const [d, v] of dir.series) if (d) byDate.set(d, v);
   if (cms && cms.series) for (const [d, v] of cms.series) if (d) byDate.set(d, v); // 官网覆盖同日
+  // 【2026-11-02】中信银行官网的当日单点并入（同日以官网为准：它是最新的官方披露口径）。
+  if (cbw0 && cbw0.series) for (const [d, v] of cbw0.series) if (d) byDate.set(d, v);
   const series = [...byDate.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   if (!series.length) return null;
   // 现金类兜底排除：返回哨兵让编排层下发 isCash（而非与「查无此码」混同）
@@ -6195,7 +6338,10 @@ export async function citicFetch(code, opts = {}) {
   const cmsLast = cms && cms.series && cms.series.length ? cms.series[cms.series.length - 1][0] : null;
   const dirLast = dir && dir.series && dir.series.length ? dir.series[dir.series.length - 1][0] : null;
   // 端口归属：谁提供最后一天算谁的（通常官网）
-  const navPort = (cmsLast && cmsLast === lastDate) ? "web" : (dirLast === lastDate ? "app" : "web");
+  const cbwLast = cbw0 && cbw0.series && cbw0.series.length ? cbw0.series[cbw0.series.length - 1][0] : null;
+  // 端口归属：谁提供最后一天算谁的（官网代销查询最权威且最新 → 优先）
+  const navPort = (cbwLast && cbwLast === lastDate) ? "citicbank-web"
+    : (cmsLast && cmsLast === lastDate) ? "web" : (dirLast === lastDate ? "app" : (cbw0 ? "citicbank-web" : "web"));
 
   const base = cms || dir || {};
   const established = (cms && cms.established) || (dir && dir.established) || series[0][0];
@@ -6203,17 +6349,17 @@ export async function citicFetch(code, opts = {}) {
   const establishedFromSeries = !(cms && cms.established && cms.establishedFromSeries === false);
 
   return {
-    name: base.name || null,
+    name: (cbw0 && cbw0.name) || base.name || null,
     // 【2026-11-02】原为 base.manager || "信银理财" —— 硬编码会把「中信代销他行产品」
     // （如光大 EW7019D）误标成信银理财，正是种子数据被写错发行方的根因。
     // 现口径：web 端口(信银自家产品)自带 manager；App 端口用调用方传入的真实发行机构；
     // 都拿不到就留 null（前端保留种子值），绝不臆测成信银理财。
-    manager: (cms && cms.manager) || (dir && dir.manager) || null,
+    manager: (cbw0 && cbw0.manager) || (cms && cms.manager) || (dir && dir.manager) || null,
     established,
     establishedFromSeries,
     series,
     kind: "nav",
-    risk: (cms && cms.risk) || (dir && dir.risk) || null,
+    risk: (cbw0 && cbw0.risk) || (cms && cms.risk) || (dir && dir.risk) || null,
     benchmark: (cms && cms.benchmark) || (dir && dir.benchmark) || null,
     holdDays: (cms && cms.holdDays != null) ? cms.holdDays : (dir && dir.holdDays != null ? dir.holdDays : null),
     regCode: (cms && cms.regCode) || (dir && dir.regCode) || null,
