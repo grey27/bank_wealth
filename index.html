@@ -1890,11 +1890,30 @@ window.MULTI_REAL = window.MULTI_REAL || {};
 
   // 2026-10-22：内置种子修复逻辑随 SEEDS 整体移除而删除（原 repairDeletedSeeds 仅用于复活被删的内置种子，现已无内置种子）
 
+  // 【2026-11-02】发行方权威校正：后端给出 managerAuthoritative（代销行/官网披露的 taName）
+  //   时，以接口值为准回写目录里的 manager 并持久化 —— 目录里的手填值可能是错的
+  //   （如 EW7019D 曾被误标「信银理财」，实为光大理财），且会被 data-sync 回灌。
+  //   ⚠ 本函数必须在**引擎块内**（reg/loadReg 可见）；第二个 IIFE 通过 Engine.setIssuer 调用，
+  //     跨块直接引用 reg 会抛 ReferenceError（2026-11-02 实测：抛错被 catch 吞掉 →
+  //     误报「未查到该产品」，而表单其实已填好）。
+  function setIssuer(code, manager) {
+    const c = String(code || "").trim().toUpperCase();
+    const m = String(manager || "").trim();
+    if (!c || !m || !reg || !Array.isArray(reg.custom)) return false;
+    const i = reg.custom.findIndex((x) => x && x.code === c);
+    if (i < 0 || reg.custom[i].manager === m) return false;
+    reg.custom[i] = Object.assign({}, reg.custom[i], { manager: m });
+    saveReg();
+    if (typeof console !== "undefined") {
+      console.info("[issuer] 发行方已按银行接口权威值校正：" + c + " → " + m);
+    }
+    return true;
+  }
   window.Engine = {
     BANKS, TERM_LABEL, TERM_DAYS, HOLIDAYS: Array.from(HOLIDAYS).sort(),
     products, banks, product, refresh: build, rebuildBank, seedRegistryFromString,
     checkCode, saveProduct, deleteProduct, mgProducts,
-    exportData, importData, lookup,
+    exportData, importData, lookup, setIssuer,
     lastRefresh: () => store.last,
     dailyOf: (code) => store.daily[code] || [],
   };
@@ -4524,10 +4543,20 @@ window.CANDIDATES = [];
         res.metaSource = meta.source;
       }
       applyLookup(res, usedBank || bank, code, auto);
-    }).catch(() => {
+    }).catch((e) => {
       // 超时 / 抓取异常：一律给出可关闭的弹窗提示（不再用一闪而过的 toast）
+      // ⚠ 2026-11-02：catch 会同时捕获「查询流程内部抛出的异常」（如跨 IIFE 引用 reg），
+      //   此前一律显示「未查到该产品」，会把「其实已抓到、只是后续步骤报错」误报成查不到
+      //   （用户报：弹窗说没抓到，关掉却发现表单已填好）。故这里区分两种语义：
+      //   ① 真查不到 → 保持原文案；② 流程内异常 → 明确说明「数据已取到但收尾失败」。
+      if (typeof console !== "undefined") { console.error("[lookup] 查询流程异常:", (e && (e.stack || e.message)) || e); }
+      const _gotSomething = !!(window.MULTI_REAL && window.MULTI_REAL[code] &&
+        window.MULTI_REAL[code].series && window.MULTI_REAL[code].series.length);
       if (timedOut) {
         showNotice("未查到该产品\n\n查询已超过 " + (LOOKUP_TIMEOUT_MS / 1000) + " 秒仍未返回结果。\n请稍后重试，或手动填写产品信息后保存。", "未查到该产品");
+      } else if (_gotSomething) {
+        // 数据其实已经取到并落库了，只是收尾环节报错 → 如实说明，不要误报「未查到」
+        showNotice("产品数据已抓取成功，但收尾时出现异常。\n\n信息已自动填入，可直接保存；若某些字段缺失，请手动补充。", "已抓到（收尾有异常）");
       } else if (!auto) {
         showNotice("未查到该产品\n\n请确认所选银行与产品代码是否正确，或手动填写产品信息后保存。", "未查到该产品");
       }
@@ -4656,15 +4685,11 @@ window.CANDIDATES = [];
     // 【2026-11-02】发行方自愈：后端标记 managerAuthoritative 时（代销行/官网披露的 taName，
     //   如中信官网 getConsignProdList 的 taName=光大理财），以接口值为准回写种子目录 ——
     //   目录里的手填值可能是错的（如 EW7019D 曾被误标「信银理财」），且会被 data-sync 回灌。
-    if (res && res.managerAuthoritative && res.manager && reg && Array.isArray(reg.custom)) {
-      const _ci = reg.custom.findIndex((c) => c && c.code === code);
-      if (_ci >= 0 && reg.custom[_ci].manager !== res.manager) {
-        reg.custom[_ci] = Object.assign({}, reg.custom[_ci], { manager: res.manager });
-        saveReg();
-        if (typeof console !== "undefined") {
-          console.info("[issuer] 发行方已按银行接口权威值校正：" + code + " → " + res.manager);
-        }
-      }
+    //   ⚠ 必须走 Engine.setIssuer：reg/loadReg 只在引擎块（第一个 IIFE）内可见，
+    //   跨块引用会抛 ReferenceError（2026-11-02 实测：异常被 catch 吞掉 → 误报「未查到该产品」，
+    //   而表单其实已填好——正是用户报的「弹窗说没抓到、关掉却已抓到」）。
+    if (res && res.managerAuthoritative && res.manager && window.Engine && typeof window.Engine.setIssuer === "function") {
+      try { window.Engine.setIssuer(code, res.manager); } catch (e) { /* 目录回写失败不影响净值落库 */ }
     }
     persistLookupReal(code, obj, bank);
     return true;
