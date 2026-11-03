@@ -175,8 +175,13 @@ async function getNodeCrypto() {
   } catch (e) { return null; }
 }
 // RSAES-PKCS1-v1.5 加密 dataKey：
-//   · 本地 Node：用原生 crypto.publicEncrypt（此 Node 的 webcrypto 不支持 RSAES-PKCS1-V1_5）
-//   · Workers：用 Web Crypto subtle.encrypt（Cloudflare Web Crypto 支持 RSAES-PKCS1-V1_5）
+//   · 本地 Node：用原生 crypto.publicEncrypt（此 Node 的 webcrypto 不支持 RSAES-PKCS1_V1_5）
+//   · Workers：**纯 JS 自实现**（BigInt 模幂 + PKCS#1 v1.5 填充）——
+//     ⚠ 2026-11-02 实测：Cloudflare Workers 的 Web Crypto **不支持 RSAES-PKCS1-V1_5**
+//       （Unrecognized key import algorithm；连字符变体 "RSAES-PKCS1-v1_5" 同样不支持，
+//        CF Web Crypto 只支持 RSA-OAEP）。故此腿在 Worker 上从未真正跑通，
+//        表现为 citicDirectNav 恒 null、citic quota 恒 null（本地 Node 正常）。
+//     本实现纯 BigInt、零依赖，Node 与 Workers 行为一致。
 async function encryptRsaPkcs1(dataKeyBytes, modulusDec, exponentDec) {
   const nodeCrypto = await getNodeCrypto();
   if (nodeCrypto && nodeCrypto.publicEncrypt) {
@@ -186,16 +191,65 @@ async function encryptRsaPkcs1(dataKeyBytes, modulusDec, exponentDec) {
       Buffer.from(dataKeyBytes)
     ));
   }
-  const subtle = (globalThis.crypto && globalThis.crypto.subtle);
-  if (!subtle) throw new Error("无可用 RSA 实现");
-  const pubKey = await subtle.importKey(
-    "jwk",
-    { kty: "RSA", n: decToB64url(modulusDec), e: decToB64url(exponentDec) },
-    { name: "RSAES-PKCS1-V1_5" },
-    false,
-    ["encrypt"]
-  );
-  return new Uint8Array(await subtle.encrypt({ name: "RSAES-PKCS1-V1_5" }, pubKey, dataKeyBytes));
+  // —— 纯 JS PKCS#1 v1.5（Worker 路径）——
+  return rsaPkcs1EncryptJs(dataKeyBytes, BigInt(modulusDec), BigInt(exponentDec));
+}
+
+// 纯 JS RSAES-PKCS1-v1.5 加密（BigInt 模幂）
+//   EM = 0x00 || 0x02 || PS(非零随机) || 0x00 || M     （M = dataKey）
+//   c  = EM^e mod n
+function rsaPkcs1EncryptJs(msg, n, e) {
+  const kLen = Math.ceil(bitLength(n) / 8);          // 模数字节长度（2048-bit → 256）
+  const mLen = msg.length;
+  if (mLen > kLen - 11) throw new Error("RSA PKCS#1: 明文过长");
+  const psLen = kLen - mLen - 3;
+  const em = new Uint8Array(kLen);
+  em[0] = 0x00;
+  em[1] = 0x02;
+  const ps = new Uint8Array(psLen);
+  for (let i = 0; i < psLen; i++) {
+    let b = 0;
+    if (globalThis.crypto && globalThis.crypto.getRandomValues) {
+      b = globalThis.crypto.getRandomValues(new Uint8Array(1))[0];
+    } else {
+      b = Math.floor(Math.random() * 256) & 0xff;
+    }
+    ps[i] = b === 0 ? 1 : b;   // PKCS#1 要求填充字节非零
+  }
+  em.set(ps, 2);
+  em[2 + psLen] = 0x00;
+  em.set(msg, 3 + psLen);
+  const c = modPow(bytesToBigInt(em), e, n);
+  return bigIntToBytes(c, kLen);
+}
+function bitLength(big) {
+  let bits = 0;
+  let v = big;
+  while (v > 0n) { bits++; v >>= 1n; }
+  return bits;
+}
+function bytesToBigInt(bytes) {
+  let bi = 0n;
+  for (let i = 0; i < bytes.length; i++) bi = (bi << 8n) | BigInt(bytes[i]);
+  return bi;
+}
+function bigIntToBytes(bi, len) {
+  const out = new Uint8Array(len);
+  let v = bi;
+  for (let i = len - 1; i >= 0; i--) { out[i] = Number(v & 0xffn); v >>= 8n; }
+  return out;
+}
+function modPow(base, exp, mod) {
+  if (mod === 1n) return 0n;
+  let result = 1n;
+  let b = base % mod;
+  let e = exp;
+  while (e > 0n) {
+    if (e & 1n) result = (result * b) % mod;
+    e >>= 1n;
+    b = (b * b) % mod;
+  }
+  return result;
 }
 
 /* ============================ 抓取主流程 ============================ */
@@ -342,7 +396,7 @@ async function citicDirectNav(code, opts = {}) {
   }
   return {
     name,
-    manager: "信银理财",
+    manager: opts.manager || null,
     established: ded[0][0],
     series: ded,
     kind: "nav",
