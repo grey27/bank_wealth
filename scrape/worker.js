@@ -6225,19 +6225,32 @@ export async function citicFetch(code, opts = {}) {
       return (d && d.series && d.series.length) ? d : null;
     } catch (e) { return null; }
   };
-  if (_mgrName && !_isCiticOwn && opts.mode === "nav") {
-    // 【2026-11-02 新增】中信银行官网「代销产品信息查询平台」端口：
-    //   收录中信代销的**全部**产品（含他行发行，如光大 EW7019D），免登录免签名、不带 Referer 也通，
-    //   且 **taName 是发行方权威口径**、navDate 比 App 端口新（官网 11-02 vs App 10-30）。
-    //   但它只给**单点**净值（无历史序列），故：官网取末点 + 发行方 + 风险，App 端口补全历史，再按日期并集。
-    const _web = await citicBankWebFetch(c, { transport, name: opts.name }).catch(() => null);
-    // 【2026-11-02】App 端口偶发失败（PENFHNLC 空响应等）→ 重试一次：
+  // 【2026-11-02】中信银行官网「代销产品信息查询平台」端口（收录中信代销的**全部**产品，含他行发行）：
+  //   taName = **发行方权威口径**；nav/navDate = 当日单点（比 App 端口新）；riskLevel；status。
+  //   它只给单点（无历史序列），故定位为「末点 + 发行方 + 风险」补充源，历史由 App 端口补全。
+  //
+  // ⚠ 判定发行方**不能只靠 opts.manager**：添加产品时前端还没存过 manager（走 /api/product
+  //   且不传 manager 参数），此时 _mgrName 为 null → 旧条件恒不成立 → 走主路径时 App 端口
+  //   因 needLong（成立不满 3 年）不启用 → 只剩官网单点 1 点 → 被编排层「全量模式单点不放行」
+  //   拒收 → 落中国理财网兜底，末点退回旧披露日（实测新增 EW8668D：末点 10-30 而非 11-02）。
+  //   故改为：**官网 taName 即权威发行方**，据此决定是否需要 App 端口补历史，两条路径行为一致。
+  const _web0 = await citicBankWebFetch(c, { transport, name: opts.name }).catch(() => null);
+  const _webTa = (_web0 && _web0.manager) ? String(_web0.manager).trim() : null;
+  // 发行方判定优先级：官网 taName（权威） > 调用方传入且能被识别的机构名
+  const _effMgrName = _webTa || _mgrName || null;
+  const _effMgrKey = _effMgrName ? managerToBankKey(_effMgrName) : "";
+  const _isCiticOwn2 = _effMgrKey === "citic";
+  if (_effMgrName && !_isCiticOwn2) {
+    // 非信银代销产品（光大理财等）：官网 + App 两腿并集
+    // 【2026-11-02】App 端口偶发失败（PENFHNLC 空响应等）→ **并发**发起两轮，先成功者胜：
     //   否则官网单点（1 点）单独成立会被编排层「全量模式单点不放行」规则拒收 → 白抓一次。
-    let _app = await directOnce().catch(() => null);
-    if (!_app) {
-      _app = await directOnce().catch(() => null);
-      if (_app) navLog("citic App 端口重试成功 code=" + c);
-    }
+    //   并发而非串行重试：串行要多等一整轮（~1.6s），并发总耗时≈一轮。
+    const _appRace = await Promise.all([
+      directOnce().catch(() => null),
+      directOnce().catch(() => null),
+    ]);
+    let _app = _appRace.find((x) => x && x.series && x.series.length) || null;
+    const _web = _web0;
     if (_web || _app) {
       const byD = new Map();
       if (_app && _app.series) for (const [d, v] of _app.series) if (d) byD.set(d, v);
@@ -6253,8 +6266,8 @@ export async function citicFetch(code, opts = {}) {
           code: c,
           name: (_web && _web.name) || (base && base.name) || null,
           // 发行方：官网 taName 优先（权威），其次调用方传入的真实机构名；都无则 null（不臆测）
-          manager: (_web && _web.manager) || _mgrName || null,
-          managerAuthoritative: !!( _web && _web.manager ),
+          manager: _effMgrName,
+          managerAuthoritative: !!_webTa,
           established: (base && base.established) || series[0][0],
           series,
           kind: "nav",
@@ -6313,7 +6326,8 @@ export async function citicFetch(code, opts = {}) {
   const cut3y = new Date(Date.now() - Math.round(3 * 365.25 * 864e5)).toISOString().slice(0, 10);
   const needLong = !estD || estD < cut3y; // 官网 3 年窗口覆盖不到成立以来
   // 【2026-11-02】中信银行官网代销查询端口并发参与：单点最新净值（比信银官网/App 都新）+ taName 发行方权威口径。
-  const cbwP = citicBankWebFetch(c, { transport, name: opts.name }).catch(() => null);
+  // 复用上游已查好的 _web0（避免同一产品查两次官网）。
+  const cbwP = Promise.resolve(_web0);
   const cmsP = det ? citicCmsFetch(c, { transport, __det: det, noCache: opts.noCache }).catch(() => null) : Promise.resolve(null);
   const dirP = needLong ? directOnce() : Promise.resolve(null);
   const [cms0, dir0, cbw0] = await Promise.all([cmsP, dirP, cbwP]);
