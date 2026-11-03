@@ -443,7 +443,7 @@ export async function citicDirectQuota(code, opts = {}) {
 
   const sess = await citicSession(transport);
   if (!sess) return null;
-  const { smEncrypt, decodeBiz } = sess;
+  const { smEncrypt, decodeBiz, jar } = sess;
 
   let pl;
   try {
