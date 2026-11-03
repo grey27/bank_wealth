@@ -4084,6 +4084,8 @@ export async function fetchProductFull(code, opts = {}) {
     navSources: retNav ? navSources : null,
     name: (mode !== "quota") ? name : null,
     manager: (mode !== "quota") ? manager : null,
+    // 发行方权威标记（代销行/官网自己披露的 taName）→ 前端据此覆盖种子里的手填值
+    managerAuthoritative: !!(retNav && nav && nav.managerAuthoritative),
     info: retInfo && info ? {
       holdDays: info.holdDays != null ? info.holdDays : null,
       risk: info.risk || null,
@@ -6159,6 +6161,7 @@ export async function citicBankWebFetch(code, opts = {}) {
     code: c,
     name: row.prdName || null,
     manager: row.taName || null,          // 发行方权威口径
+    managerAuthoritative: true,             // 代销行自己披露的发行方 → 前端可据此覆盖种子值
     nav: Number.isFinite(navVal) ? navVal : null,
     navDate: navIso,
     risk: /^[1-5]$/.test(riskLv) ? ("R" + riskLv) : null,
@@ -6251,6 +6254,7 @@ export async function citicFetch(code, opts = {}) {
           name: (_web && _web.name) || (base && base.name) || null,
           // 发行方：官网 taName 优先（权威），其次调用方传入的真实机构名；都无则 null（不臆测）
           manager: (_web && _web.manager) || _mgrName || null,
+          managerAuthoritative: !!( _web && _web.manager ),
           established: (base && base.established) || series[0][0],
           series,
           kind: "nav",
@@ -6355,6 +6359,7 @@ export async function citicFetch(code, opts = {}) {
     // 现口径：web 端口(信银自家产品)自带 manager；App 端口用调用方传入的真实发行机构；
     // 都拿不到就留 null（前端保留种子值），绝不臆测成信银理财。
     manager: (cbw0 && cbw0.manager) || (cms && cms.manager) || (dir && dir.manager) || null,
+    managerAuthoritative: !!(cbw0 && cbw0.manager),
     established,
     establishedFromSeries,
     series,

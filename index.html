@@ -4136,6 +4136,8 @@ window.CANDIDATES = [];
       isCash: !!pr.isCash, // 2026-10-22：后端直连识别到的现金管理类（OPEN_TYPE=6/XJL 等）→ 从源头拦截
       name: pr.name || null,
       manager: pr.manager || null,
+      // 2026-11-02：发行方权威标记（后端来自代销行/官网披露的 taName）→ 前端据此校正种子目录里的手填值
+      managerAuthoritative: !!pr.managerAuthoritative,
       series: (nav && nav.series) || [],
       kind: (nav && nav.kind) || "nav",
       navBasis: (nav && nav.navBasis) || "nav",
@@ -4651,6 +4653,19 @@ window.CANDIDATES = [];
     };
     window.MULTI_REAL = window.MULTI_REAL || {};
     window.MULTI_REAL[code] = obj;
+    // 【2026-11-02】发行方自愈：后端标记 managerAuthoritative 时（代销行/官网披露的 taName，
+    //   如中信官网 getConsignProdList 的 taName=光大理财），以接口值为准回写种子目录 ——
+    //   目录里的手填值可能是错的（如 EW7019D 曾被误标「信银理财」），且会被 data-sync 回灌。
+    if (res && res.managerAuthoritative && res.manager && reg && Array.isArray(reg.custom)) {
+      const _ci = reg.custom.findIndex((c) => c && c.code === code);
+      if (_ci >= 0 && reg.custom[_ci].manager !== res.manager) {
+        reg.custom[_ci] = Object.assign({}, reg.custom[_ci], { manager: res.manager });
+        saveReg();
+        if (typeof console !== "undefined") {
+          console.info("[issuer] 发行方已按银行接口权威值校正：" + code + " → " + res.manager);
+        }
+      }
+    }
     persistLookupReal(code, obj, bank);
     return true;
   }
