@@ -259,6 +259,14 @@ const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/6
 const TIMEOUT_MS = 20000;
 
 let cookieJar = [];
+
+// 【2026-11-02】App 端口净值结果缓存（60s）：
+//   中信对同一出口 IP 的高频请求会回 MBFO010（风控），生产实测失败率约 1/3。
+//   缓存成功结果 → 同 isolate 内重复抓取不再打服务器 → 显著降低触发风控的概率。
+//   只缓存成功结果（失败不缓存，避免把瞬时故障放大）。TTL 60s 远短于每日披露周期，
+//   不会挡住当日新净值；用户手动刷新走 noCache 绕过。
+const CITIC_NAV_CACHE_TTL = 60000;
+const citicNavCache = new Map();   // code -> { t, v }
 async function postJson(act, bodyObj, transport, jar) {
   const fetcher = transport || fetch;
   const body = JSON.stringify(bodyObj);
@@ -331,6 +339,11 @@ async function citicDirectNav(code, opts = {}) {
   const c = String(code || "").trim().toUpperCase();
   if (!c) return null;
   const transport = opts.transport;
+  // 【2026-11-02】命中缓存直接返回（60s），避免高频打服务器触发 MBFO010 风控
+  if (!opts.noCache) {
+    const _hit = citicNavCache.get(c);
+    if (_hit && Date.now() - _hit.t < CITIC_NAV_CACHE_TTL) return _hit.v;
+  }
   // 探测用（2026-10-25）：每步回调，便于看 PEMBFIPL / PENFPDQR 的原始返回
   const onStep = typeof opts.onStep === "function" ? opts.onStep : null;
   const step = (name, txt, parsed) => { if (onStep) { try { onStep(name, txt, parsed); } catch (e) { /* 忽略 */ } } };
@@ -398,7 +411,7 @@ const d2 = decodeBiz(await postJson("PENFPDQR", smEncrypt({ PRDCODE: c, TACODE: 
     if (ded.length && ded[ded.length - 1][0] === r[0]) ded[ded.length - 1] = r;
     else ded.push(r);
   }
-  return {
+  const _out = {
     name,
     manager: opts.manager || null,
     established: ded[0][0],
@@ -409,6 +422,9 @@ const d2 = decodeBiz(await postJson("PENFPDQR", smEncrypt({ PRDCODE: c, TACODE: 
     bank: "citic",
     navVia: "citic",
   };
+  // 【2026-11-02】只缓存成功结果（失败不缓存，避免把瞬时故障放大成 60s 黑洞）
+  if (!opts.noCache) citicNavCache.set(c, { t: Date.now(), v: _out });
+  return _out;
 }
 
 /* ============================ 额度（2026-10-25 新增） ============================
