@@ -2034,12 +2034,12 @@ window.CANDIDATES = [];
       : badge;
   }
 
-  function toast(msg) {
+  function toast(msg, ms) {
     const t = $("#toast");
     t.textContent = msg;
     t.classList.remove("hidden");
     clearTimeout(toast._t);
-    toast._t = setTimeout(() => t.classList.add("hidden"), 1800);
+    toast._t = setTimeout(() => t.classList.add("hidden"), ms || 1800);
   }
 
   /* ---------- 收藏（★） ---------- */
@@ -3526,7 +3526,9 @@ window.CANDIDATES = [];
     $("#editTitle").textContent = code ? "修改产品" : "添加产品";
     const meta = state.mgMeta;
     if (!meta.banks) { toast("目录尚未加载"); return; }
-    fillSelect($("#fBank"), meta.banks.map(b => ({ key: b.key, label: b.name })), it ? it.bank : "icbc");
+    // 2026-11-04：添加模式下追加「请选择银行」空占位项，供「银行选错→否」时清空下拉框重选。
+    const bankList = [{ key: "", label: "请选择银行" }].concat(meta.banks.map(b => ({ key: b.key, label: b.name })));
+    fillSelect($("#fBank"), bankList, code ? (it ? it.bank : "icbc") : "icbc");
     // 持有天数用数字输入框（任意天数），不再受期限下拉的枚举值限制
     $("#fHoldDays").value = it ? (it.termDays || Engine.TERM_DAYS[it.term] || "") : "";
     fillSelect($("#fRisk"), meta.risks.map(r => ({ key: r, label: r })), it ? it.risk : "R2");
@@ -4035,7 +4037,7 @@ window.CANDIDATES = [];
   // 抓净值时发行银行不按 code 调 /api/predict 预判，改由本参数透传后端按 MANAGER_TO_KEY
   // （口径同 predict 规则 JSON 的 manager_to_parent_key）换算成发行银行 key；仅添加新产品
   // （lookupProduct）时产品尚未入列、无此行内字段，才走 /api/predict 预判。
-  function fetchProductUnified(code, issuer, agent, deadlineAt, name, regCode, infoComplete, benchmark, benchmarkKnown, mode, manager, force, since, fmInternalCode) {
+  function fetchProductUnified(code, issuer, agent, deadlineAt, name, regCode, infoComplete, benchmark, benchmarkKnown, mode, manager, force, since, fmInternalCode, add) {
     // —— 偏好银行标记（首次双抓定标后持久化；以后只抓该银行，不再试另一家）——
     let preferBank = null;
     try { const pm = JSON.parse(localStorage.getItem("observer_prefer_bank") || "{}"); preferBank = pm[code] || null; } catch (e) {}
@@ -4072,6 +4074,7 @@ window.CANDIDATES = [];
       (since ? "&since=" + encodeURIComponent(since) : "") +
       // 2026-11-02 用户规则：富民内部产品码（DX…）回传后端，跳过静态映射表 + 30min 目录缓存。
       (fmInternalCode ? "&fmInternalCode=" + encodeURIComponent(fmInternalCode) : "") +
+      (add ? "&add=1" : "") +
       (force ? "&noCache=1" : "");
     const t0 = (typeof performance !== "undefined") ? performance.now() : Date.now();
     // /api/product 的净值主路径为银行/发行方接口（本地由本机 IP 直连，线上走 Cloudflare），
@@ -4190,6 +4193,8 @@ window.CANDIDATES = [];
       // 2026-11-02 用户规则：富民内部产品码（DX…）随 /api/product 返回，落库供刷新时回传、跳过静态表/目录缓存。
       // 仅 fminbank 来源才有意义——其它银行回传的 navViaCode 是产品代码本身（非内部码），不采纳。
       fmInternalCode: (pr.navVia === "fminbank" && nav && nav.navViaCode) ? nav.navViaCode : null,
+      // 2026-11-04：添加产品流程信号（仅 add 模式后端下发），供弹窗决策：IP 被封 / 银行选错 / 改银行 / 未找到。
+      addFlow: pr.addFlow || null,
     };
   }
 
@@ -4488,13 +4493,14 @@ window.CANDIDATES = [];
       const pred = await fetchPredict(code, deadlineAt).catch(() => null);
       const issuer = (pred && pred.issuerKey) || "";
       const agent = ((bank || "").toLowerCase()) || (pred && pred.agentKey) || "";
-      const pr = await fetchProductUnified(code, issuer, agent, deadlineAt).catch(() => null);
+      const pr = await fetchProductUnified(code, issuer, agent, deadlineAt, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, true).catch(() => null);
       if (!pr) return null;
       const res = normalizeProductApi(pr);
       if (!res) return null;
       const usedBank = (pr.navVia === "chinawealth") ? "中国理财网" : (pr.navVia || agent || issuer);
       // 2026-10-22：后端若识别为现金管理类（isCash），连同 res 的万份收益口径一并作为拦截依据
-      return { res: res, usedBank: usedBank, navVia: pr.navVia, isCash: pr.isCash };
+      // 2026-11-04：把后端 addFlow 信号原样带回，供结果处理器决定弹窗。
+      return { res: res, usedBank: usedBank, navVia: pr.navVia, isCash: pr.isCash, addFlow: pr.addFlow || null };
     }
 
     const isMybank = ((bank || "").toLowerCase() === "mybank");
@@ -4518,6 +4524,50 @@ window.CANDIDATES = [];
       if (isCashProduct(res) || isCashProduct(meta) || (r && r.isCash)) {
         if (!auto) showNotice("该产品为现金管理类（净值需按万份收益折算）。\n本 App 只收录有单位净值的净值型产品，请换一个产品代码。", "目前不收录现金类产品");
         return;
+      }
+      // 2026-11-04：添加产品流程弹窗（addFlow 仅 add 模式下发；刷新/补抓无此信号，沿用旧逻辑）
+      // 优先级：① 代销行 IP 被封 → ② 代销行没找到（预判发行行 IP 被封 / 找到→问是否改银行 / 也找不到→未找到）。
+      const af = r ? r.addFlow : null;
+      if (af && !auto) {
+        if (af.agentBlocked) {
+          // ① 下拉框代销银行 IP 被封：3 秒提示，不误导用户以为没产品
+          toast("「" + bankName(bank) + "」IP 被封，请过一段时间再试", 3000);
+          return;
+        }
+        if (!af.agentFound) {
+          if (af.issuerBlocked) {
+            // ②a 预判发行行 IP 被封
+            showNotice(
+              "银行选错\n\n该产品在下拉框「" + bankName(bank) + "」未找到。\n可能是「" + bankName(af.predictedIssuer) + "」产品，但「" + bankName(af.predictedIssuer) + "」IP 被封，请过一段时间再试。",
+              "银行选错");
+            return;
+          }
+          if (af.issuerFound) {
+            // ②b 预判发行行找到 → 询问是否将银行改为预判发行行
+            showConfirm(
+              "银行选错\n\n该产品在下拉框「" + bankName(bank) + "」未找到。\n可能是「" + bankName(af.predictedIssuer) + "」产品。\n是否将银行改为「" + bankName(af.predictedIssuer) + "」？",
+              () => { // 是：下拉框改为预判发行行并重跑
+                const sel = $("#fBank"); if (sel) sel.value = af.predictedIssuer;
+                lookupProduct(af.predictedIssuer, code, auto);
+              },
+              () => { // 否：清空下拉框，重新选择银行
+                const sel = $("#fBank"); if (sel) sel.value = "";
+              });
+            return;
+          }
+          // ②c 预判也找不到 → 未找到（按文档：此场景不走中国理财网兜底）
+          showNotice(
+            "未找到 " + code + "\n\n在下拉框「" + bankName(bank) + "」及预判发行行「" + bankName(af.predictedIssuer) + "」均未找到该产品。\n请确认银行与产品代码是否正确。",
+            "未找到");
+          return;
+        }
+        // ③b 代销行找到产品，但五字段不齐（pdfNeeded）→ 提示将异步从说明书补充
+        if (af.pdfNeeded) {
+          setTimeout(function () {
+            toast("部分基本信息缺失，将自动从产品说明书补充（约 1 小时内）", 3500);
+          }, 700);
+        }
+        // ③ 代销银行找到产品 → 落入下方正常流程（含发行≠代销补净值 / 中国理财网补齐缺失字段）
       }
       if (!res || (!res.series && !res.name)) {
         // 网商路径：说明书未抓到且无任何净值/名称 → 明确提示（区别于「输入错误」）
@@ -5512,27 +5562,41 @@ window.CANDIDATES = [];
   });
 
   /* --- 通用删除确认弹层 --- */
-  let _confirmCb = null;
-  function showConfirm(msg, onOk) {
+  let _confirmCb = null, _confirmCancelCb = null;
+  function showConfirm(msg, onOk, onCancel) {
     $("#confirmMsg").textContent = msg;
     $("#confirmMask").classList.remove("hidden");
     _confirmCb = onOk || null;
+    _confirmCancelCb = onCancel || null;
   }
   function bindConfirm() {
     $("#confirmOk").addEventListener("click", () => {
       $("#confirmMask").classList.add("hidden");
-      if (_confirmCb) { const cb = _confirmCb; _confirmCb = null; cb(); }
+      if (_confirmCb) { const cb = _confirmCb; _confirmCb = null; _confirmCancelCb = null; cb(); }
     });
     $("#confirmCancel").addEventListener("click", () => {
       $("#confirmMask").classList.add("hidden");
-      _confirmCb = null;
+      if (_confirmCancelCb) { const cb = _confirmCancelCb; _confirmCancelCb = null; _confirmCb = null; cb(); }
+      else { _confirmCb = null; }
     });
     $("#confirmMask").addEventListener("click", e => {
-      if (e.target === $("#confirmMask")) { $("#confirmMask").classList.add("hidden"); _confirmCb = null; }
+      if (e.target === $("#confirmMask")) {
+        $("#confirmMask").classList.add("hidden");
+        if (_confirmCancelCb) { const cb = _confirmCancelCb; _confirmCancelCb = null; _confirmCb = null; cb(); }
+        else { _confirmCb = null; }
+      }
     });
   }
 
   /* --- 通用提示弹层：查询结果为空 / 超时等需要用户点「关闭」才消失的提示 --- */
+  // 2026-11-04：银行 key → 中文名（用于添加产品弹窗文案）；未知 key 原样返回。
+  // 注意：本函数在 UI 脚本块内（Engine 块已闭合），BANKS 不可见；银行中文名用同块内的 BANK_NAMES（覆盖全部 25 家）。
+  function bankName(key) {
+    if (!key) return "未知银行";
+    if (BANK_NAMES && BANK_NAMES[key]) return BANK_NAMES[key];
+    return String(key);
+  }
+
   function showNotice(msg, title) {
     const m = $("#notFoundMask");
     if (!m) return;
