@@ -84,7 +84,7 @@ button { font-family: inherit; border: none; background: none; cursor: pointer; 
 /* 管理页标签（与概览 .big-tab 同款，但用 .mg-tab 以避免与全局 .big-tab 点击冲突） */
 .mg-tab { padding: 8px 22px; border-radius: 10px; font-size: calc(16px * var(--fs) * 0.95); font-weight: 600; color: #666; transition: all .15s; border: none; background: transparent; cursor: pointer; }
 .mg-tab.active { background: #1e6fff; color: #fff; box-shadow: 0 2px 8px rgba(30, 111, 255, .4); }
-/* 精选/候选 标签下方的小计数（所有银行产品总数） */
+/* 全部理财产品标签下方的小计数（所有银行产品总数） */
 .big-tab, .mg-tab { display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.12; gap: 1px; }
 .tab-count { font-size: calc(11px * var(--fs)); font-weight: 500; opacity: .7; letter-spacing: .3px; }
 .big-tab.active .tab-count, .mg-tab.active .tab-count { opacity: .95; }
@@ -453,7 +453,7 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
   font-size: calc(12.5px * var(--fs)); color: #667;
 }
 .mg-tabs button.active { background: #efe9ff; color: #6a5fd0; font-weight: 600; }
-/* 精选/候选 行右侧：导出 / 导入 / ＋添加（2026-10-25 用户要求从顶栏移入此行） */
+/* 全部理财产品标签行右侧：导出 / 导入 / ＋添加（2026-10-25 用户要求从顶栏移入此行） */
 #mgTabs .mg-ops { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 #mgTabs .mg-ops .btn-mini { padding: 4px 10px; font-size: calc(12px * var(--fs)); white-space: nowrap; }
 .mg-filter {
@@ -712,7 +712,7 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
    全局纵向滚动杆由上方 ≥760px 块里的 html { overflow-y: scroll } 提供。
    手机 / 平板（窄屏或触屏）行为完全不变。 */
 
-/* 手机：精选/候选与图标栏收紧间距，但触口保持 ≥36px，避免被旧规则压回 28px */
+/* 手机：产品标签与图标栏收紧间距，但触口保持 ≥36px，避免被旧规则压回 28px */
 @media (max-width: 520px) {
   .big-tab { padding: 8px 10px; min-height: 40px; }
   .head-icons { gap: 4px; }
@@ -855,8 +855,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
   <div class="panel">
     <div class="panel-head">
       <div class="big-tabs">
-        <button class="big-tab active" data-tab="short">精选<span class="tab-count" id="cntShort">0</span></button>
-        <button class="big-tab" data-tab="candidate">候选<span class="tab-count" id="cntCand">0</span></button>
+        <button class="big-tab active" data-tab="all">全部<span class="tab-count" id="cntAll">0</span></button>
       </div>
       <div class="head-icons">
         <button class="icon-btn" id="btnRefresh" title="所有产品刷新"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
@@ -1051,8 +1050,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
     </header>
     <input type="file" id="fImport" accept="application/json,.json" class="hidden">
     <div class="big-tabs" id="mgTabs">
-      <button class="mg-tab active" data-mgtab="short">精选<span class="tab-count" id="mgCntShort">0</span></button>
-      <button class="mg-tab" data-mgtab="candidate">候选<span class="tab-count" id="mgCntCand">0</span></button>
+      <button class="mg-tab active" data-mgtab="all">全部<span class="tab-count" id="mgCntAll">0</span></button>
       <div class="mg-ops">
         <button class="btn-mini" id="btnExport" title="导出备份">导出</button>
         <button class="btn-mini" id="btnImport" title="导入备份">导入</button>
@@ -1728,13 +1726,11 @@ window.MULTI_REAL = window.MULTI_REAL || {};
 
   function products(opt) {
     opt = opt || {};
-    const bank = opt.bank || "all", tab = opt.tab || "short";
+    const bank = opt.bank || "all";
     const sort = opt.sort || "y7", order = opt.order || "desc", q = (opt.q || "").trim().toLowerCase();
     let out = [];
     for (const r of store.rows) {
       if (bank !== "all" && bank !== "" && r.bank !== bank) continue;
-      // 精选（原短期）展示全部「我的产品」；长期分类已取消
-      if (tab === "long" && !r.isLong) continue;
       if (q && r.name.toLowerCase().indexOf(q) < 0 && r.code.toLowerCase().indexOf(q) < 0
             && (r.manager || "").toLowerCase().indexOf(q) < 0) continue;
       out.push(r);
@@ -1799,7 +1795,7 @@ window.MULTI_REAL = window.MULTI_REAL || {};
     const _days = normDays(v.termDays);
     if (!_days) return { ok: false, message: "请填写持有天数（1~3650 的整数）" };
     // 该代码已存在于目录（即曾被删除的内置种子 / 自定义产品）：走「恢复 + 字段更新」，
-    // 绝不能再插一条 custom，否则目录出现两条同码记录 → 精选重复显示两行（AF63636B 实例）。
+    // 绝不能再插一条 custom，否则目录出现两条同码记录 → 列表重复显示两行（AF63636B 实例）。
     const existed = baseItems().find(x => x.code === v.code);
     if (existed) {
       const patch = Object.assign({}, reg.patches[v.code] || {});
@@ -1865,7 +1861,7 @@ window.MULTI_REAL = window.MULTI_REAL || {};
       code = (code || "").trim().toUpperCase();
       const it = baseItems().find(x => x.code === code);
       if (it) return updateProduct(code, body);
-      // 候选产品（不在目录中）保存编辑时，转为自定义产品入库：修改得以持久化，且不再重复出现在候选池
+      // 不在目录中的产品保存编辑时，转为自定义产品入库，修改得以持久化
       const v = Object.assign({}, body); v.code = code;
       return addProduct(v);
     }
@@ -1990,10 +1986,8 @@ window.MULTI_REAL = window.MULTI_REAL || {};
 </script>
 
 <script>
-/* 2026-10-22：内嵌候选池（window.CANDIDATES，200 条烘焙数据）已移除。
-   它是早期「候选产品只能靠页面预置」时的离线数据集，实际从未在候选页显示过任何产品；
-   候选一律由抓取引擎实时产出。这里保留空数组定义，避免下游直接引用时取不到值。
-   下游引用点均已用 (window.CANDIDATES || []) 兜底，删除后自动降级为空候选。 */
+/* 2026-10-22：内嵌披露池（window.CANDIDATES，200 条烘焙数据）已移除。
+   查询工行产品时仍会读这个空数组做兜底，没有命中就走实时抓取。 */
 window.CANDIDATES = [];
 </script>
 <script>
@@ -2025,7 +2019,7 @@ window.CANDIDATES = [];
   } catch (e) {}
 
   const state = {
-    tab: "short",
+    tab: "all",
     bank: "icbc",
     sort: "dailyWan",
     order: "desc",
@@ -2039,10 +2033,6 @@ window.CANDIDATES = [];
     lastRefresh: "",
     // 收藏的产品代码（前端本地状态，与「持有$」互斥的跨银行视图）
     favs: JSON.parse(localStorage.getItem("observer_favs") || "[]"),
-    // 由「精选」移到「候选」的产品代码。这些产品仍留在目录中（银行归属、真实净值、指标都不丢），
-    // 只是不在精选显示、改在候选显示。此前缺这个标记，退回的产品会退化工行候选池里的同名产品，
-    // 于是中国银行的产品被算成工商银行的候选。
-    toCand: JSON.parse(localStorage.getItem("observer_tocand") || "[]"),
     drawerCode: null,
     chartKey: "wan",
     range: "all",
@@ -2054,7 +2044,7 @@ window.CANDIDATES = [];
     // 2026-10-18 修复：原本仅内存态，关闭网页再打开即清空，导致「用时 Xs」丢失（只剩持久化的「更新于」）。
     // 现落盘到 observer_bank_refresh_msg，重载后 renderTable 仍优先复用 → 「用时 + 更新于」一并恢复。
     bankRefreshMsg: JSON.parse(localStorage.getItem("observer_bank_refresh_msg") || "{}"),
-    mgTab: "short",
+    mgTab: "all",
     mgItems: [],
     mgMeta: {},
     mgSort: "",
@@ -2186,21 +2176,11 @@ window.CANDIDATES = [];
   }
 
   /* ---------- 银行标签 ---------- */
-  // 各银行产品数：跟随当前 tab（精选 = 种子 + 已通过候选；候选 = 候选池去重后），按银行分组
+  // 各银行产品数：全部理财产品按银行分组
   function bankCounts() {
     const counts = {};
-    const add = r => { counts[r.bank] = (counts[r.bank] || 0) + 1; };
-    if (state.tab === "candidate") {
-      const activeCodes = new Set();
-      Engine.products({ bank: "all", tab: "all", sort: "name", order: "asc", q: "" }).forEach(r => activeCodes.add(r.code));
-      candRowsAll().filter(r => !activeCodes.has(r.code) && !isToCand(r.code)).forEach(add);
-      // 由精选退回的产品：按其原本所属银行计数（中国银行退回的仍算中国银行）
-      toCandRows().forEach(add);
-    } else {
-      const active = Engine.products({ bank: "all", tab: "all", sort: "name", order: "asc", q: "" });
-      // 已退回候选的产品不计入精选；在候选里被删除的产品同样不能回到精选
-      active.filter(r => !isToCand(r.code)).forEach(add);
-    }
+    Engine.products({ bank: "all", sort: "name", order: "asc", q: "" })
+      .forEach(r => { counts[r.bank] = (counts[r.bank] || 0) + 1; });
     return counts;
   }
   /* 银行行为横向滚动时：重绘后保留原有滚动位置；首次渲染则把当前银行居中，保证一定看得见 */
@@ -2230,7 +2210,7 @@ window.CANDIDATES = [];
     keepBankScroll(row, prevScroll);
   }
 
-  /* ---------- 候选产品（真实抓取自工商银行披露页） ---------- */
+  /* ---------- 工行披露池（查询未入库产品时的兜底数据源，当前为空） ---------- */
   const ICBC_DETAIL_URL = "https://www.icbc.com.cn/webpage/finance/disclosure/detail/net-value/?prodId=";
   const ENRO = { GY: "工银理财", PAWM: "平安理财", EW: "光大理财", Y05: "兴银理财", PY: "浦银理财", CMB: "招银理财", CW: "中银理财", CCB: "建信理财", ABC: "农银理财", BOC: "中银理财", HT: "华夏理财", GF: "广银理财", SD: "上银理财", QD: "青银理财", ICBC: "工银理财" };
   function candCompany(c) {
@@ -2243,14 +2223,13 @@ window.CANDIDATES = [];
   }
   function parsePct(v) { if (v == null) return null; const s = String(v).replace("%", "").trim(); const n = parseFloat(s); return isNaN(n) ? null : n; }
   function candAnn(a, b, n) { if (!b) return null; const r = a / b; if (r <= 0) return null; return (Math.pow(r, 365 / n) - 1) * 100; }
-  // 优先取实时真实净值序列（与「精选」computeMetrics 同源）：同一产品无论在「精选」还是「候选」查看，
-  // 成立以来年化等指标都应一致。实时序列从成立日(或更早)起算且为最新净值；快照则可能中段抓取、且用观测点个数年化，
-  // 二者会出现明显偏差（如 AF63636B：精选 6.41% vs 候选 9.72%）。
+  // 优先取实时真实净值序列（与目录产品 computeMetrics 同源）：成立以来年化等指标都应一致。
+  // 实时序列从成立日(或更早)起算且为最新净值；快照则可能中段抓取、且用观测点个数年化。
   function candRealSeries(code) {
     const r = (window.MULTI_REAL && window.MULTI_REAL[code]) || null;
     return (r && r.series && r.series.length) ? r : null;
   }
-  // 候选产品（来自工行披露池）原始数据不含风险等级。风险等级来源优先级：
+  // 工行披露池原始数据不含风险等级。风险等级来源优先级：
   // ① 已被查询/抓取的本地缓存（observer_lookup_*，真实）优先；
   // ② CAND_RISK_OVERRIDE（可由中国理财网等真实数据补抓后人工/脚本填入，覆盖以下推断）；
   // ③ 否则按产品类型推断（现金管理=R1，固收=R2，含权益/全球配置/增强/混合=R3），与 App 既有规则一致。
@@ -2276,7 +2255,7 @@ window.CANDIDATES = [];
   function calcCand(c) {
     const real = candRealSeries(c.prodId);
     if (real && real.kind !== "cash") {
-      // 实时真实净值：与「精选」computeMetrics 同一套「日历天数」annAt 口径，保证数值一致
+      // 实时真实净值：与目录产品 computeMetrics 同一套「日历天数」annAt 口径，保证数值一致
       // 注意：本 script 块与引擎 IIFE 不同块，不能引用引擎内部 const addDays（跨块不可见，会 ReferenceError）
       const _addDays = (ds, n) => {
         const y = (ds.charCodeAt(0) - 48) * 1000 + (ds.charCodeAt(1) - 48) * 100 + (ds.charCodeAt(2) - 48) * 10 + (ds.charCodeAt(3) - 48);
@@ -2379,7 +2358,7 @@ window.CANDIDATES = [];
       y1m: num(last.y1m), y3m: num(last.y3m), y1y: num(last.y1y), since: num(last.since),
       zeroDays30: zero30, negDays30: neg30,
     };
-    // 候选产品同样给出「N天X%」达标占比，口径与计算结果一致（全历史估值日的年化率超阈值占比）
+    // 披露池产品同样给出「N天X%」达标占比，口径与计算结果一致（全历史估值日的年化率超阈值占比）
     for (const [pre, win] of [["p7", "y7"], ["p14", "y14"], ["p30", "y1m"]]) {
       const arr = daily.filter(p => p.v === 1).map(p => p[win]).filter(v => v !== null && v !== undefined);
       for (const [sfx, t] of [["25", 2.5], ["30", 3.0], ["35", 3.5], ["40", 4.0], ["45", 4.5], ["50", 5.0]]) {
@@ -2392,41 +2371,10 @@ window.CANDIDATES = [];
   function candRowsAll() { if (_candCache) return _candCache; _candCache = (window.CANDIDATES || []).map(c => calcCand(c).row); return _candCache; }
   function buildCandProduct(code) { const c = (window.CANDIDATES || []).find(x => x.prodId === code); return c ? calcCand(c) : null; }
 
-  /* 「精选 → 候选」的产品仓库。
-     这些产品仍留在目录中，所以银行归属、真实净值、各项指标都不会丢；仅仅是精选里不显示、候选里显示。
-     若不用这份标记而靠「从目录删除」，产品会掉进工行候选池（CANDIDATES）——中银理财的产品常被工行代销、
-     代码与工行候选池重复，于是中国银行的产品就会摇身变成工商银行的候选产品。 */
-  function persistToCand() { try { localStorage.setItem("observer_tocand", JSON.stringify(state.toCand)); } catch (e) {} }
-  function isToCand(code) { return state.toCand.indexOf(code) >= 0; }
   function catCodeSet() {
     const s = new Set();
-    Engine.products({ bank: "all", tab: "all", sort: "name", order: "asc", q: "" }).forEach(r => s.add(r.code));
+    Engine.products({ bank: "all", sort: "name", order: "asc", q: "" }).forEach(r => s.add(r.code));
     return s;
-  }
-  function toCandRows() {
-    if (!state.toCand.length) return [];
-    return Engine.products({ bank: "all", tab: "all", sort: "name", order: "asc", q: "" })
-      .filter(r => isToCand(r.code));
-  }
-  // 移出精选：在目录中的产品保留归属退回候选；不在目录中的产品（纯自定义）只能真删除。
-  // 返回 "keep"（保留归属进候选）/ "pool"（退回候选池）/ "del"（已删除）
-  function sendToCandidate(code, catSet) {
-    const inCat = catSet ? catSet.has(code) : catCodeSet().has(code);
-    if (inCat) { if (!isToCand(code)) { state.toCand.push(code); persistToCand(); } return "keep"; }
-    // 不在目录中的产品（纯自定义）：退回候选即真删除
-    Engine.deleteProduct(code);
-    return "del";
-  }
-
-  function passCandidate(code) {
-    // 候选 → 精选：摘掉「已退回候选」标记（产品在目录中，去掉标记即回到精选）
-    if (isToCand(code)) { state.toCand = state.toCand.filter(c => c !== code); persistToCand(); }
-    renderTable(); renderBanks(); toast("已通过，加入我的产品");
-  }
-  function unpassCandidate(code) {
-    // 精选 → 候选：目录中的产品保留原银行归属退回候选
-    if (catCodeSet().has(code) && !isToCand(code)) { state.toCand.push(code); persistToCand(); }
-    renderTable(); renderBanks(); toast("已退回候选产品");
   }
   function sortRows(rows) {
     const k = state.sort, ord = state.order === "asc" ? 1 : -1;
@@ -2831,11 +2779,7 @@ window.CANDIDATES = [];
     const riskTag = (isCodeHeld(r.code) && /^R[123]$/.test(r.risk || ""))
       ? `<span class="risk-badge hold-badge" title="已持仓">$</span>`
       : (/^R[1-5]$/.test(r.risk || "") ? `<span class="risk-badge ${r.risk.toLowerCase()}">${r.risk}</span>` : "");
-    let action = "";
-    // 仅候选 tab 显示「通过」；精选/全部 tab 不再显示按钮，点产品名称直接查看详情（编辑在管理页进行）。
-    // 「退回」按钮已移除：产品移入精选后无需再在列表里退回（管理页「移动到候选」仍可做此操作）。
-    if (state.tab === "candidate") action = `<button class="pass-btn" data-pass="1">通过</button>`;
-    const extra = action ? `<span class="pass-wrap">${action}</span>` : "";
+    const extra = "";
     const bankLabel = (state.starOnly || state.heldOnly) ? `<span class="name-bank">${escapeHtml(bankName(r.bank))}</span>` : "";
     return `<tr data-code="${r.code}">
       <td class="cell-name"><span class="name-wrap"><a class="name-link" href="javascript:void(0)">${r.name}</a>${riskTag}${bankLabel}</span>${star}${demoTag}${extra}</td>
@@ -2887,43 +2831,18 @@ window.CANDIDATES = [];
   function renderTable() {
     const tbody = $("#tbody");
     applyStarModeUI();
-    if (state.tab === "candidate") {
-      // 已加入「精选/我的产品」的种子，以及已通过的候选，都不应再出现在候选池，避免重复
-      const activeCodes = new Set();
-      Engine.products({ bank: "all", tab: "all", sort: "name", order: "asc", q: "" }).forEach(r => activeCodes.add(r.code));
-      // 在管理页删掉的候选，概览页候选池必须同步消失（与 renderManage 同一套过滤条件）
-      // 已退回候选的产品在此被排除，改由下面 toCandRows() 带着原银行归属进入候选
-      let rows = candRowsAll().filter(r => !activeCodes.has(r.code) && !isToCand(r.code));
-      rows = rows.concat(toCandRows());
-      if (state.bank && state.bank !== "all" && !state.starOnly && !state.heldOnly) rows = rows.filter(r => r.bank === state.bank);
-      if (state.q && !state.starOnly) { const q = state.q.toLowerCase(); rows = rows.filter(r => (r.name + " " + r.code + " " + r.manager).toLowerCase().includes(q)); }
-      if (state.starOnly) rows = rows.filter(r => isFav(r.code));
-      if (state.heldOnly) rows = rows.filter(r => isCodeHeld(r.code));
-      rows.forEach(r => { r.heldAnn = heldAnnRate(r.code); });
-      rows = sortRows(rows);
-      state.rows = rows;
-      state.listRows = rows; // 批量刷新队列用：与页面渲染完全一致的最终行集
-      state.footDefault = `候选产品共 ${rows.length} 个（点击「通过」加入我的产品）`;
-      setFootMsg();
-      if (!rows.length) { tbody.innerHTML = ""; $("#emptyTip").classList.remove("hidden"); updateTabCounts(); return; }
-      $("#emptyTip").classList.add("hidden");
-      tbody.innerHTML = rows.map(r => rowHtml(r)).join("");
-      return;
-    }
     const data = Engine.products({
-      bank: (state.starOnly || state.heldOnly) ? "all" : state.bank, tab: (state.starOnly || state.heldOnly) ? "all" : state.tab,
+      bank: (state.starOnly || state.heldOnly) ? "all" : state.bank,
       sort: state.sort, order: state.order, q: state.starOnly ? "" : state.q,
     });
     state.rows = data;
     state.lastRefresh = Engine.lastRefresh();
     state.holidays = Engine.HOLIDAYS;
-    // 已退回候选、以及在候选里已删除的产品，都不属于精选
-    let rows = state.rows.filter(r => (!state.starOnly || isFav(r.code)) && (!state.heldOnly || isCodeHeld(r.code)))
-      .filter(r => !isToCand(r.code));
+    let rows = state.rows.filter(r => (!state.starOnly || isFav(r.code)) && (!state.heldOnly || isCodeHeld(r.code)));
     // 关键修复：必须对合并列表重新排序，否则刚变动的产品会停在最后一行、表头排序对其无效。
     rows.forEach(r => { r.heldAnn = heldAnnRate(r.code); });
     rows = sortRows(rows);
-    state.listRows = rows; // 批量刷新队列用：与页面渲染完全一致的最终行集（过滤+已通过候选+当前排序）
+    state.listRows = rows; // 批量刷新队列用：与页面渲染完全一致的最终行集（过滤+当前排序）
     // 刷新完成消息（含用时）优先：切走再返回该银行时保持「N/N 个产品 • 用时 Xs • 更新于 ...」，不被静态文案覆盖。
     // starOnly（收藏）/ heldOnly（持仓）均为跨银行视图，不适用银行维度消息，显示对应静态文案。
     const _prevMsg = !state.starOnly && !state.heldOnly && state.bankRefreshMsg && (state.bankRefreshMsg[state.bank] || state.bankRefreshMsg["_all_"]);
@@ -2935,7 +2854,7 @@ window.CANDIDATES = [];
           ? `共 ${rows.length} 个收藏产品（不分银行）· 点击产品名查看详情`
           : `共 ${rows.length} 个产品 · 更新于 ${state.lastRefresh} · 点击产品名查看详情`));
     setFootMsg();
-    if (!rows.length) { tbody.innerHTML = ""; $("#emptyTip").classList.remove("hidden"); return; }
+    if (!rows.length) { tbody.innerHTML = ""; $("#emptyTip").classList.remove("hidden"); updateTabCounts(); return; }
     $("#emptyTip").classList.add("hidden");
     tbody.innerHTML = rows.map(r => rowHtml(r)).join("");
     updateTabCounts();
@@ -3299,7 +3218,6 @@ window.CANDIDATES = [];
 
   function syncMgTabs() {
     $$("#mgTabs .mg-tab").forEach(x => x.classList.toggle("active", x.dataset.mgtab === state.mgTab));
-    $("#btnAddProduct").classList.toggle("hidden", state.mgTab === "candidate");
   }
 
   function renderMgBanks() {
@@ -3309,18 +3227,7 @@ window.CANDIDATES = [];
     const chips = state.banks || [];
     if (chips.length && !chips.some(b => b.key === state.bank)) state.bank = chips[0].key;
     const counts = {};
-    // 计数口径与下方 renderManage 的清单完全一致：精选含「已通过候选」，候选剔除已加入精选/已删除的
-    let srcRows;
-    if (state.mgTab === "candidate") {
-      const activeCodes = new Set();
-      Engine.products({ bank: "all", tab: "all", sort: "name", order: "asc", q: "" }).forEach(r => activeCodes.add(r.code));
-      srcRows = candRowsAll().filter(r => !activeCodes.has(r.code) && !isToCand(r.code));
-      // 由精选退回的产品保留原银行归属计入候选
-      toCandRows().forEach(r => srcRows.push(r));
-    } else {
-      srcRows = Engine.products({ bank: "all", tab: "short", sort: "name", order: "asc", q: "" })
-        .filter(r => !isToCand(r.code));
-    }
+    const srcRows = Engine.products({ bank: "all", sort: "name", order: "asc", q: "" });
     srcRows.forEach(r => { counts[r.bank] = (counts[r.bank] || 0) + 1; });
     row.innerHTML = chips.map(b => {
       const dot = `<i class="dot" style="background:${b.mode === "real" ? "#0a9c46" : "#f5a623"}"></i>`;
@@ -3339,7 +3246,7 @@ window.CANDIDATES = [];
     el.innerHTML = list.map(o => `<option value="${o.key}"${o.key === cur ? " selected" : ""}>${o.label}</option>`).join("");
   }
 
-  function mgRowHtml(r, isCand) {
+  function mgRowHtml(r) {
     const cn = r.confirmDays || 1;
     const star = isFav(r.code) ? `<span class="name-star">★</span>` : "";
     const badge = cn > 1 ? `<span class="stale-badge">T+${cn}</span>` : "";
@@ -3387,42 +3294,21 @@ window.CANDIDATES = [];
     });
   }
 
-  /* 精选/候选 tab 下方小计数：按 bank:"all" 统计该状态下所有银行产品总数（与 renderMgBanks 口径一致） */
-  function tabTotalRows(tab) {
-    if (tab === "candidate") {
-      const activeCodes = new Set();
-      Engine.products({ bank: "all", tab: "all", sort: "name", order: "asc", q: "" }).forEach(r => activeCodes.add(r.code));
-      let rows = candRowsAll().filter(r => !activeCodes.has(r.code) && !isToCand(r.code));
-      toCandRows().forEach(r => rows.push(r));
-      return rows.length;
-    }
-    let rows = Engine.products({ bank: "all", tab: "short", sort: "name", order: "asc", q: "" })
-      .filter(r => !isToCand(r.code));
-    return rows.length;
+  /* 全部理财产品标签下方小计数：按 bank:"all" 统计所有银行产品总数（与 renderMgBanks 口径一致） */
+  function tabTotalRows() {
+    return Engine.products({ bank: "all", sort: "name", order: "asc", q: "" }).length;
   }
   function updateTabCounts() {
-    const s = tabTotalRows("short"), c = tabTotalRows("candidate");
-    const map = { cntShort: s, cntCand: c, mgCntShort: s, mgCntCand: c };
-    for (const id in map) { const el = document.getElementById(id); if (el) el.textContent = map[id]; }
+    const n = tabTotalRows();
+    ["cntAll", "mgCntAll"].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = n; });
   }
 
   function renderManage() {
     mgCheckAnchor = null; // 列表重建后重置连续选择起点
-    let rows;
-    if (state.mgTab === "candidate") {
-      // 候选：真实抓取自工行披露页；已加入精选的种子、已通过的候选、已删除的候选不再出现，避免重复
-      const activeCodes = new Set();
-      Engine.products({ bank: "all", tab: "all", sort: "name", order: "asc", q: "" }).forEach(r => activeCodes.add(r.code));
-      rows = candRowsAll().filter(r => !activeCodes.has(r.code) && !isToCand(r.code));
-      rows = rows.concat(toCandRows());
-      if (state.bank && state.bank !== "all") rows = rows.filter(r => r.bank === state.bank);
-      if (state.q) { const q = state.q.toLowerCase(); rows = rows.filter(r => (r.name + " " + r.code + " " + r.manager).toLowerCase().includes(q)); }
-    } else {
-      rows = Engine.products({
-        bank: state.bank, tab: "short",
-        sort: state.mgSort || "dailyWan", order: state.mgOrder, q: state.q || "",
-      }).filter(r => !isToCand(r.code));
-    }
+    let rows = Engine.products({
+      bank: state.bank,
+      sort: state.mgSort || "dailyWan", order: state.mgOrder, q: state.q || "",
+    });
     rows.forEach(r => { r.heldAnn = heldAnnRate(r.code); });
     rows = mgSortRows(rows);
     const box = $("#mgList");
@@ -3430,15 +3316,14 @@ window.CANDIDATES = [];
     renderMgToolbar();
     if (!rows.length) {
       box.innerHTML = "";
-      empty.textContent = state.mgTab === "candidate" ? "候选产品已空（全部已加入精选或删除）" : "暂无产品";
+      empty.textContent = "暂无产品";
       empty.classList.remove("hidden");
       syncMgCheckAll();
       updateTabCounts();
       return;
     }
     empty.classList.add("hidden");
-    const isCand = state.mgTab === "candidate";
-    box.innerHTML = rows.map(r => mgRowHtml(r, isCand)).join("");
+    box.innerHTML = rows.map(r => mgRowHtml(r)).join("");
     markMgSorted();
     syncMgCheckAll();
     updateTabCounts();
@@ -3447,18 +3332,10 @@ window.CANDIDATES = [];
   const MG_NOTE = "点产品名称可修改信息，配置保存在服务器，建议定期「导出」备份";
   function renderMgToolbar() {
     const bar = $("#mgToolbar");
-    if (state.mgTab === "candidate") {
-      bar.innerHTML = `
-        <button class="btn-mini primary" data-mgact="toShort">移动到精选</button>
-        <button class="btn-mini danger" data-mgact="del">删除</button>
-        <span class="mg-note">${MG_NOTE}</span>
-        <span class="sel-count" id="mgSelCount"></span>`;
-    } else {
-      bar.innerHTML = `
-        <button class="btn-mini primary" data-mgact="toCand">移动到候选</button>
-        <span class="mg-note">${MG_NOTE}</span>
-        <span class="sel-count" id="mgSelCount"></span>`;
-    }
+    bar.innerHTML = `
+      <button class="btn-mini danger" data-mgact="del">删除</button>
+      <span class="mg-note">${MG_NOTE}</span>
+      <span class="sel-count" id="mgSelCount"></span>`;
   }
 
   function mgSelectedCodes() {
@@ -3482,42 +3359,15 @@ window.CANDIDATES = [];
     syncMgCheckAll();
   }
 
-  function mgBulkToCandidate() {
-    const codes = mgSelectedCodes();
-    if (!codes.length) { toast("请先勾选要移动的产品"); return; }
-    let nBack = 0, nDel = 0;
-    // 目录中的产品（含中国银行/建设银行等各行种子）退回候选时保留原银行归属：
-    // 它们只被标记，不被删除，因此不会出现「中国银行的产品变成工商银行候选」。
-    const catSet = catCodeSet();
-    codes.forEach(code => {
-      const r = sendToCandidate(code, catSet);
-      if (r === "del") nDel++; else nBack++;
-    });
-    renderMgBanks(); renderManage(); renderTable(); renderBanks();
-    toast(nBack ? `已移动 ${nBack} 个到候选产品` + (nDel ? `，移除 ${nDel} 个自定义产品` : "") : `已移除 ${nDel} 个产品`);
-  }
-
-  function mgBulkToShort() {
-    const codes = mgSelectedCodes();
-    if (!codes.length) { toast("请先勾选要移动的产品"); return; }
-    codes.forEach(code => passCandidate(code));
-    renderMgBanks(); renderManage();
-    toast(`已加入精选 ${codes.length} 个`);
-  }
-
-  function mgBulkDeleteCands() {
+  function mgBulkDelete() {
     const codes = mgSelectedCodes();
     if (!codes.length) { toast("请先勾选要删除的产品"); return; }
     showConfirm(`要删除 ${codes.length} 个产品吗？`, () => {
       const catSet = catCodeSet();
       codes.forEach(code => {
-        // 目录中的产品（含退回候选的）真正从目录删除；deleteProduct 已同步清理净值记录与退回候选标记
-        // try/catch 防御：即便 deleteProduct 因任何原因抛错，也保证下方 toCand 清理与提示照常执行，避免「删不掉」
         try { if (catSet.has(code)) Engine.deleteProduct(code); } catch (e) { console.warn("[del] 删除目录项失败（已跳过）:", code, e); }
       });
-      state.toCand = state.toCand.filter(c => codes.indexOf(c) < 0);
-      persistToCand();
-      // 同时刷新背后的概览页：候选 tab 与银行计数都要跟着少掉这些产品
+      // 同时刷新背后的概览页与银行计数
       renderMgBanks(); renderManage(); renderTable(); renderBanks();
       toast(`已删除 ${codes.length} 个产品`);
     });
@@ -3549,7 +3399,7 @@ window.CANDIDATES = [];
     // 所有银行（含工行）均支持「查询」（经 Serverless 代理 / 本地 server.py 实时抓取）
     $("#btnLookup").classList.remove("hidden");
     $("#fCodeHint").textContent = icbc
-      ? "输入产品代码后点『查询』，从工行候选池 / 本地净值库抓取并填充名称 / 管理人 / 成立日"
+      ? "输入产品代码后点『查询』，从工行披露池 / 本地净值库抓取并填充名称 / 管理人 / 成立日"
       : "输入产品代码后点『查询』，由服务器从银行实时抓取并填充；直接以 file:// 打开则回退本地净值库";
   }
 
@@ -3560,7 +3410,7 @@ window.CANDIDATES = [];
       const d = Engine.mgProducts(state.bank || "all", state.sort || "name", state.order || "asc");
       state.mgMeta = d.meta || {}; state.mgItems = d.items || [];
     }
-    // 解析待编辑产品：优先管理目录，其次目录产品，最后候选真实数据（候选不在目录中，需从候选池回解）
+    // 解析待编辑产品：优先管理目录，其次目录产品，最后披露池真实数据
     let it = code ? state.mgItems.find(x => x.code === code) : null;
     if (!it) {
       const p = Engine.product(code);
@@ -3609,7 +3459,7 @@ window.CANDIDATES = [];
 
   function codeHintDefault() {
     return $("#fBank").value === "icbc"
-      ? "输入产品代码后点『查询』，从工行候选池 / 本地净值库填充"
+      ? "输入产品代码后点『查询』，从工行披露池 / 本地净值库填充"
       : "输入产品代码后点『查询』，由服务器从银行实时抓取；以 file:// 打开则回退本地净值库";
   }
 
@@ -3886,15 +3736,15 @@ window.CANDIDATES = [];
     }).catch(() => null);
   }
 
-  // 解析顺序：工行候选池（真实抓取自工行披露页）→ 已抓工行真实净值 → 本地已抓真实库（非工行）→ 浏览器可直连实时接口 → null
+  // 解析顺序：工行披露池（真实抓取自工行披露页）→ 已抓工行真实净值 → 本地已抓真实库（非工行）→ 浏览器可直连实时接口 → null
   function doLookupProduct(bank, code) {
     if (bank === "icbc") {
-      // 工行官网接口浏览器跨域受限，无法直接拉取；改用「候选池（真实抓取自工行披露页）」作为数据源
+      // 工行官网接口浏览器跨域受限，无法直接拉取；改用「披露池（真实抓取自工行披露页）」作为数据源
       const built = buildCandProduct(code);
       if (built) {
         const r = built.row;
         const daily = built.daily || [];
-        // 注意：以下 wan/cash 口径分支只服务于【历史烘焙进候选池的数据】，
+        // 注意：以下 wan/cash 口径分支只服务于【历史烘焙进披露池的数据】，
         // 线上抓取（scrape/worker.js）自 2026-10-21 项目规则起不再产出 kind:"wan"/"cash"
         // （现金管理类一律不抓），该分支的结果最终也会被下方 isCashProduct 拒绝收录，勿扩展。
         const isWan = !!(built.raw && (built.raw.kind === "wan" || built.raw.kind === "cash"));
@@ -5033,7 +4883,7 @@ window.CANDIDATES = [];
         if (changed) localStorage.setItem("observer_fetch_fail", JSON.stringify(m));
       } else if (scopeBank && scopeBank !== "all") {
         // 2026-10-14 用户规则：刷新只清【当前银行】的「未抓到」标记，其它银行的保留
-        const codes = new Set(Engine.products({ bank: scopeBank, tab: "all" })
+        const codes = new Set(Engine.products({ bank: scopeBank })
           .map(r => (r.code || "").trim().toUpperCase()).filter(Boolean));
         const m = JSON.parse(localStorage.getItem("observer_fetch_fail") || "{}");
         let changed = false;
@@ -5198,7 +5048,7 @@ window.CANDIDATES = [];
           } else {
             Engine.refresh();
           }
-          // 候选行（已通过候选）走 candRowsAll() 的 _candCache，缓存后不再重算 → 刷新后仍是旧指标，必须作废。
+          // 披露池行走 candRowsAll() 的 _candCache，缓存后不再重算 → 刷新后仍是旧指标，必须作废。
           _candCache = null;
         }
         // 本轮抓取全部完成：清空「刷新中」临时标记，重绘时「刷新来源」列恢复为刚抓到的新来源
@@ -5301,7 +5151,7 @@ window.CANDIDATES = [];
     // 先按当前产物快照捕获「未抓到/有无净值/今天是否已刷」——clearTimeColumns 会清空未抓到标记，
     // 必须在清列之前固化，否则排序时 isFetchFailed 已失效、优先级失效。
     const todo = [], seen = new Set();
-    for (const r of Engine.products({ bank: "all", tab: "all" })) {
+    for (const r of Engine.products({ bank: "all" })) {
       const code = (r.code || "").trim().toUpperCase();
       if (!code || seen.has(code)) continue;
       seen.add(code);
@@ -5355,13 +5205,6 @@ window.CANDIDATES = [];
   }));
 
   $("#tbody").addEventListener("click", e => {
-    const pb = e.target.closest(".pass-btn");
-    if (pb) {
-      const tr = pb.closest("tr[data-code]"); if (!tr) return;
-      if (pb.dataset.pass) passCandidate(tr.dataset.code);
-      else if (pb.dataset.passBack) unpassCandidate(tr.dataset.code);
-      return;
-    }
     // 点击「产品名称」打开产品详情抽屉；其他单元格不触发
     const tr = e.target.closest("tr[data-code]");
     if (tr && e.target.closest(".name-link")) openDrawer(tr.dataset.code);
@@ -5515,7 +5358,7 @@ window.CANDIDATES = [];
           if (changed) localStorage.setItem(key, JSON.stringify(m));
         }
       } else if (scopeBank && scopeBank !== "all") {
-        codes = new Set(Engine.products({ bank: scopeBank, tab: "all" })
+        codes = new Set(Engine.products({ bank: scopeBank })
           .map(r => (r.code || "").trim().toUpperCase()).filter(Boolean));
         for (const key of ["observer_refresh_dur", "observer_refresh_breakdown"]) {
           const m = JSON.parse(localStorage.getItem(key) || "{}");
@@ -5526,7 +5369,7 @@ window.CANDIDATES = [];
       } else {
         localStorage.removeItem("observer_refresh_dur");
         localStorage.removeItem("observer_refresh_breakdown");
-        codes = new Set(Engine.products({ bank: "all", tab: "all" })
+        codes = new Set(Engine.products({ bank: "all" })
           .map(r => (r.code || "").trim().toUpperCase()).filter(Boolean));
       }
       // 2026-10-18 用户规则：「刷新来源」列也要在刷新开始时先清除（与抓取时间/时间分解一致），
@@ -5551,7 +5394,7 @@ window.CANDIDATES = [];
       const isCodeSet = scopeBank && typeof scopeBank === "object" && typeof scopeBank.has === "function";
       const scope = isCodeSet ? "all" : (scopeBank || state.bank);
       const codes = isCodeSet ? new Set(scopeBank)
-        : new Set(Engine.products({ bank: scope, tab: "all" })
+        : new Set(Engine.products({ bank: scope })
           .map(r => (r.code || "").trim().toUpperCase()).filter(Boolean));
       if (!codes.size) return;
       const store = window.MULTI_REAL || (window.MULTI_REAL = {});
@@ -5566,7 +5409,7 @@ window.CANDIDATES = [];
       // 2026-10-27 修复：同时清空「列表行」里的额度副本（build 时从 MULTI_REAL 复制进 store.rows 的独立对象），
       // 否则仅改 MULTI_REAL 不重建行 → renderTable 仍读旧副本 → 「额度」列在刷新期间不清空。
       // 直接改 store.rows 元素（Engine.products 返回的是行对象引用），renderTable 立即生效。
-      for (const r of Engine.products({ bank: scope, tab: "all" })) {
+      for (const r of Engine.products({ bank: scope })) {
         if (isCodeSet && !codes.has((r.code || "").trim().toUpperCase())) continue;
         if (r.quotaManual === true) continue; // 手动售罄标记同样保留
         r.remainQuota = null; r.remainQuotaPct = null; r.quotaSaleStatus = null;
@@ -5692,9 +5535,6 @@ window.CANDIDATES = [];
     $$("#mgTabs .mg-tab").forEach(x => x.classList.remove("active"));
     t.classList.add("active");
     state.mgTab = t.dataset.mgtab;
-    $("#btnAddProduct").classList.toggle("hidden", state.mgTab === "candidate");
-    // 候选标签不再强行切到工商银行：从「中国银行」等产品退回的候选仍属于原银行，
-    // 保留当前银行筛选，用户才能在中行标签下看到自己刚移过去的产品。
     if (state.banks && state.banks.length && !state.banks.some(b => b.key === state.bank)) state.bank = state.banks[0].key;
     renderMgBanks(); renderManage();
   });
@@ -5702,14 +5542,6 @@ window.CANDIDATES = [];
   let mgCheckAnchor = null; // 最近一次单击的复选框 code，供 Shift+点击 连续多选/多不选
 
   $("#mgList").addEventListener("click", e => {
-    const pb = e.target.closest(".pass-btn");
-    if (pb) {
-      const tr = pb.closest("tr[data-code]"); if (!tr) return;
-      if (pb.dataset.pass) passCandidate(tr.dataset.code);
-      else if (pb.dataset.passBack) unpassCandidate(tr.dataset.code);
-      renderMgBanks(); renderManage();
-      return;
-    }
     // Shift+点击 复选框：以最近单击的复选框为起点，将 [起点, 当前] 区间内所有复选框
     // 统一设为当前复选框的新状态（勾选→连续多选，取消勾选→连续多不选）
     const chk = e.target.closest(".mg-check");
@@ -5727,7 +5559,7 @@ window.CANDIDATES = [];
       syncMgCheckAll();
       return;
     }
-    // 点击产品名进入编辑（修改产品信息），精选与候选标签均可；候选产品编辑保存后会转为自定义产品入库
+    // 点击产品名进入编辑（修改产品信息）；不在目录中的产品编辑保存后会转为自定义产品入库
     const tr = e.target.closest("tr[data-code]");
     if (tr && e.target.closest(".name-link")) openEdit(tr.dataset.code);
   });
@@ -5741,9 +5573,7 @@ window.CANDIDATES = [];
     const act = btn.dataset.mgact;
     if (act === "all") mgBulkSelectAll(true);
     else if (act === "none") mgBulkSelectAll(false);
-    else if (act === "toCand") mgBulkToCandidate();
-    else if (act === "toShort") mgBulkToShort();
-    else if (act === "del") mgBulkDeleteCands();
+    else if (act === "del") mgBulkDelete();
   });
 
   $("#mgCheckAll").addEventListener("change", e => mgBulkSelectAll(e.target.checked));
@@ -5764,10 +5594,9 @@ window.CANDIDATES = [];
 
   $("#btnExport").addEventListener("click", () => {
     const data = Engine.exportData();
-    // 收藏/已退回候选(toCand)都是前端本地状态，不在 Engine 注册表里，导出时一并备份，
+    // 收藏是前端本地状态，不在 Engine 注册表里，导出时一并备份，
     // 否则恢复备份后会丢掉这些偏好。
     data.favs = state.favs.slice();
-    data.toCand = state.toCand.slice();
     const blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -5789,10 +5618,9 @@ window.CANDIDATES = [];
       const d = Engine.importData(data);
       // 只恢复备份文件里真正存在的字段：旧版备份不含这些键时，保持本地现状不被清空
       if (Array.isArray(data.favs)) { state.favs = data.favs.slice(); }
-      if (Array.isArray(data.toCand)) { state.toCand = data.toCand.slice(); }
       try {
         localStorage.setItem("observer_favs", JSON.stringify(state.favs));
-        localStorage.setItem("observer_tocand", JSON.stringify(state.toCand));
+        localStorage.removeItem("observer_tocand");
       } catch (e) {}
       afterManage(d);
     };
@@ -5932,6 +5760,8 @@ window.CANDIDATES = [];
 
   /* ---------- 初始化 ---------- */
   async function init() {
+    // 精选/候选已取消：清掉旧的「退回候选」标记，目录里的产品全部进入「全部」列表
+    try { localStorage.removeItem("observer_tocand"); } catch (e) {}
     bindConfirm();
     bindNotice();
     // 顺序：先按服务端 registry 重载目录（线上），再用它做 NAV 孤儿 prune，最后叠加同源净值。
@@ -5955,7 +5785,7 @@ window.CANDIDATES = [];
       const n = parseInt(localStorage.getItem("observer_repaired_notice") || "0", 10);
       if (n > 0) {
         localStorage.removeItem("observer_repaired_notice");
-        toast(`已恢复 ${n} 个被误移出精选的产品，按原银行归入候选`);
+        toast(`已恢复 ${n} 个产品到全部理财产品`);
       }
     } catch (e) {}
   }

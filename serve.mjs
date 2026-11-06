@@ -29,11 +29,11 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.argv[2]) || 8766;
 
 // ---- 产品数据持久化（2026-10-14）----
-// 浏览器 localStorage 里的 observer_* 数据（产品目录/精选/候选/净值缓存/运行日志）
+// 浏览器 localStorage 里的 observer_* 数据（产品目录/净值缓存/运行日志）
 // 会自动同步到项目目录下；克隆文件夹或换端口后自动恢复。详见 data-sync.js。
 //
 // 2026-10-14 起：服务端由「单个 产品数据.json」拆成 3 个文件，按数据性质分家 ——
-//   ① 产品数据.json  目录 / 精选 / 候选 / 偏好      ~24 KB   小而常改，缩进 2 空格，可读可 diff
+//   ① 产品数据.json  目录 / 偏好               ~24 KB   小而常改，缩进 2 空格，可读可 diff
 //   ② 净值数据.json  observer_lookup_*              ~561 KB  两个重键，占总量 83%
 //   ③ 运行日志.json  observer_refresh_* / fetch_fail ~87 KB  纯抓取调试数据，可随时删
 // ⚠ 对外接口（GET/POST /api/state）**形状完全不变**：GET 仍然把所有文件的 data 合并成
