@@ -444,7 +444,6 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
   padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
   color: #fff; background: var(--header-grad);
 }
-#mgTabs { flex: 0 0 auto; }
 .mg-head h3 { flex: 1; min-width: 0; text-align: center; font-size: calc(17px * var(--fs)); font-weight: 600; letter-spacing: .5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mg-head .icon-btn { color: #fff; background: rgba(255, 255, 255, .16); }
 .mg-tabs { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #f0f0f6; }
@@ -453,9 +452,6 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
   font-size: calc(12.5px * var(--fs)); color: #667;
 }
 .mg-tabs button.active { background: #efe9ff; color: #6a5fd0; font-weight: 600; }
-/* 全部理财产品标签行右侧：导出 / 导入 / ＋添加（2026-10-25 用户要求从顶栏移入此行） */
-#mgTabs .mg-ops { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-#mgTabs .mg-ops .btn-mini { padding: 4px 10px; font-size: calc(12px * var(--fs)); white-space: nowrap; }
 .mg-filter {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 12px; border-bottom: 1px solid #f2f0fa; background: #fbfaff;
@@ -542,10 +538,8 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
   .modal-foot.two { gap: 12px; flex-wrap: wrap; }
   .btn-primary, .btn-ghost { min-height: 40px; }
   .mg-head { padding: calc(8px + env(safe-area-inset-top)) 10px 8px; }
-  #mgTabs { flex-wrap: wrap; padding: 8px 10px; }
-  #mgTabs .mg-ops { margin-left: 0; width: 100%; }
-  #mgTabs .mg-ops .btn-mini { min-height: 36px; flex: 1 1 auto; }
-  .mg-toolbar { padding: 8px 10px; }
+  .mg-toolbar { padding: 8px 10px; gap: 6px; }
+  .mg-toolbar .btn-mini { min-height: 36px; padding: 6px 10px; }
   .mg-panel .hero, .mg-panel .panel { padding-left: 8px; padding-right: 8px; }
 }
 @media (max-width: 430px) {
@@ -577,7 +571,8 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
 .btn-mini:disabled { opacity: .5; cursor: not-allowed; }
 .col-check { width: 34px; min-width: 34px; text-align: center; padding-left: 6px; padding-right: 6px; }
 .mg-toolbar { flex: 0 0 auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 9px 12px; border-bottom: 1px solid #f0f0f6; background: #fafbff; }
-.mg-toolbar .mg-note { flex: 1 1 auto; min-width: 0; color: #999; font-size: calc(11.5px * var(--fs)); line-height: 1.5; }
+.mg-toolbar .mg-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.mg-toolbar .mg-note { flex: 1 1 140px; min-width: 0; color: #999; font-size: calc(11.5px * var(--fs)); line-height: 1.5; }
 .mg-toolbar .sel-count { margin-left: auto; color: #888; font-size: calc(12px * var(--fs)); white-space: nowrap; }
 #confirmMask { z-index: 400; }
 #notFoundMask { z-index: 410; }
@@ -854,9 +849,6 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
 <div class="hero">
   <div class="panel">
     <div class="panel-head">
-      <div class="big-tabs">
-        <button class="big-tab active" data-tab="all">全部<span class="tab-count" id="cntAll">0</span></button>
-      </div>
       <div class="head-icons">
         <button class="icon-btn" id="btnRefresh" title="所有产品刷新"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
         <button class="icon-btn" id="btnHeld" title="只看持有"><span aria-hidden="true">$</span></button>
@@ -1049,14 +1041,6 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
       </div>
     </header>
     <input type="file" id="fImport" accept="application/json,.json" class="hidden">
-    <div class="big-tabs" id="mgTabs">
-      <button class="mg-tab active" data-mgtab="all">全部<span class="tab-count" id="mgCntAll">0</span></button>
-      <div class="mg-ops">
-        <button class="btn-mini" id="btnExport" title="导出备份">导出</button>
-        <button class="btn-mini" id="btnImport" title="导入备份">导入</button>
-        <button class="btn-mini primary" id="btnAddProduct">＋添加</button>
-      </div>
-    </div>
     <div class="mg-scroll" id="mgScroll">
       <div class="hero">
         <div class="panel">
@@ -2020,7 +2004,7 @@ window.CANDIDATES = [];
 
   const state = {
     tab: "all",
-    bank: "icbc",
+    bank: "all",
     sort: "dailyWan",
     order: "desc",
     q: "",
@@ -2198,9 +2182,11 @@ window.CANDIDATES = [];
     const row = $("#bankRow");
     const prevScroll = row ? row.scrollLeft : 0;
     const chips = state.banks || [];
-    if (chips.length && !chips.some(b => b.key === state.bank)) state.bank = chips[0].key;
+    if (state.bank !== "all" && chips.length && !chips.some(b => b.key === state.bank)) state.bank = chips[0].key;
     const counts = bankCounts();
-    row.innerHTML = chips.map(b => {
+    const total = Object.keys(counts).reduce((n, k) => n + counts[k], 0);
+    const allChip = `<button class="bank-chip ${state.bank === "all" ? "active" : ""}" data-bank="all">全部${total ? ` ${total}` : ""}</button>`;
+    row.innerHTML = allChip + chips.map(b => {
       const dot = `<i class="dot" style="background:${b.mode === "real" ? "#0a9c46" : "#f5a623"}"></i>`;
       const label = b.short || b.name;
       const cnt = counts[b.key] || 0;
@@ -2780,7 +2766,7 @@ window.CANDIDATES = [];
       ? `<span class="risk-badge hold-badge" title="已持仓">$</span>`
       : (/^R[1-5]$/.test(r.risk || "") ? `<span class="risk-badge ${r.risk.toLowerCase()}">${r.risk}</span>` : "");
     const extra = "";
-    const bankLabel = (state.starOnly || state.heldOnly) ? `<span class="name-bank">${escapeHtml(bankName(r.bank))}</span>` : "";
+    const bankLabel = (state.starOnly || state.heldOnly || state.bank === "all") ? `<span class="name-bank">${escapeHtml(bankName(r.bank))}</span>` : "";
     return `<tr data-code="${r.code}">
       <td class="cell-name"><span class="name-wrap"><a class="name-link" href="javascript:void(0)">${r.name}</a>${riskTag}${bankLabel}</span>${star}${demoTag}${extra}</td>
       <td><span class="nav-date">${fmt.date(r.navDate)}${badge}</span></td>
@@ -2822,7 +2808,7 @@ window.CANDIDATES = [];
 
   /* ---------- 表格 ---------- */
   function applyStarModeUI() {
-    const table = $("#ptable"); if (table) table.classList.toggle("star-rows", state.starOnly);
+    const table = $("#ptable"); if (table) table.classList.toggle("star-rows", state.starOnly || state.heldOnly || state.bank === "all");
     const hero = document.querySelector(".hero"); if (hero) {
       hero.classList.toggle("star-hidden", state.starOnly);
       hero.classList.toggle("held-hidden", state.heldOnly);
@@ -2845,19 +2831,21 @@ window.CANDIDATES = [];
     state.listRows = rows; // 批量刷新队列用：与页面渲染完全一致的最终行集（过滤+当前排序）
     // 刷新完成消息（含用时）优先：切走再返回该银行时保持「N/N 个产品 • 用时 Xs • 更新于 ...」，不被静态文案覆盖。
     // starOnly（收藏）/ heldOnly（持仓）均为跨银行视图，不适用银行维度消息，显示对应静态文案。
-    const _prevMsg = !state.starOnly && !state.heldOnly && state.bankRefreshMsg && (state.bankRefreshMsg[state.bank] || state.bankRefreshMsg["_all_"]);
+    const _prevMsg = !state.starOnly && !state.heldOnly && state.bankRefreshMsg
+      && state.bankRefreshMsg[state.bank === "all" ? "_all_" : state.bank];
     state.footDefault = _prevMsg
       ? _prevMsg
       : (state.heldOnly
         ? `共 ${rows.length} 个持仓产品（不分银行）· 点击产品名查看详情`
         : (state.starOnly
           ? `共 ${rows.length} 个收藏产品（不分银行）· 点击产品名查看详情`
-          : `共 ${rows.length} 个产品 · 更新于 ${state.lastRefresh} · 点击产品名查看详情`));
+          : (state.bank === "all"
+            ? `共 ${rows.length} 个产品（全部银行）· 更新于 ${state.lastRefresh} · 点击产品名查看详情`
+            : `共 ${rows.length} 个产品 · 更新于 ${state.lastRefresh} · 点击产品名查看详情`)));
     setFootMsg();
-    if (!rows.length) { tbody.innerHTML = ""; $("#emptyTip").classList.remove("hidden"); updateTabCounts(); return; }
+    if (!rows.length) { tbody.innerHTML = ""; $("#emptyTip").classList.remove("hidden"); return; }
     $("#emptyTip").classList.add("hidden");
     tbody.innerHTML = rows.map(r => rowHtml(r)).join("");
-    updateTabCounts();
   }
 
   /* ---------- 表头排序 ---------- */
@@ -3210,14 +3198,9 @@ window.CANDIDATES = [];
     const d = Engine.mgProducts(state.bank, state.sort, state.order);
     state.mgMeta = d.meta || {};
     state.mgItems = d.items || [];
-    syncMgTabs();
     renderMgBanks();
     renderManage();
     return Promise.resolve();
-  }
-
-  function syncMgTabs() {
-    $$("#mgTabs .mg-tab").forEach(x => x.classList.toggle("active", x.dataset.mgtab === state.mgTab));
   }
 
   function renderMgBanks() {
@@ -3225,11 +3208,13 @@ window.CANDIDATES = [];
     const prevScroll = row ? row.scrollLeft : 0;
     if (!state.banks || !state.banks.length) state.banks = Engine.banks();
     const chips = state.banks || [];
-    if (chips.length && !chips.some(b => b.key === state.bank)) state.bank = chips[0].key;
+    if (state.bank !== "all" && chips.length && !chips.some(b => b.key === state.bank)) state.bank = chips[0].key;
     const counts = {};
     const srcRows = Engine.products({ bank: "all", sort: "name", order: "asc", q: "" });
     srcRows.forEach(r => { counts[r.bank] = (counts[r.bank] || 0) + 1; });
-    row.innerHTML = chips.map(b => {
+    const total = Object.keys(counts).reduce((n, k) => n + counts[k], 0);
+    const allChip = `<button class="bank-chip ${state.bank === "all" ? "active" : ""}" data-bank="all">全部${total ? ` ${total}` : ""}</button>`;
+    row.innerHTML = allChip + chips.map(b => {
       const dot = `<i class="dot" style="background:${b.mode === "real" ? "#0a9c46" : "#f5a623"}"></i>`;
       const label = b.short || b.name;
       const cnt = counts[b.key] || 0;
@@ -3256,9 +3241,10 @@ window.CANDIDATES = [];
     const riskTag = (isCodeHeld(r.code) && /^R[123]$/.test(r.risk || ""))
       ? `<span class="risk-badge hold-badge" title="已持仓">$</span>`
       : (/^R[1-5]$/.test(r.risk || "") ? `<span class="risk-badge ${r.risk.toLowerCase()}">${r.risk}</span>` : "");
+    const bankLabel = state.bank === "all" ? `<span class="name-bank">${escapeHtml(bankName(r.bank))}</span>` : "";
     return `<tr data-code="${r.code}">
       <td class="col-check"><input type="checkbox" class="mg-check" value="${r.code}"></td>
-      <td class="cell-name"><span class="name-wrap"><a class="name-link" href="javascript:void(0)">${r.name}</a>${riskTag}</span>${star}${demoTag}</td>
+      <td class="cell-name"><span class="name-wrap"><a class="name-link" href="javascript:void(0)">${r.name}</a>${riskTag}${bankLabel}</span>${star}${demoTag}</td>
       <td><span class="nav-date">${fmt.date(r.navDate)}</span>${badge}</td>
       <td class="col-quota">${quotaCellHtml(r)}</td>
       <td class="col-heldann"${r.heldAnn ? ` title="份额加权整体持仓年化｜总收益 ${r.heldAnn.totalRetPct}%｜加权持有 ${r.heldAnn.avgDays} 天｜起点 ${r.heldAnn.startDate}"` : ""}>${r.heldAnn ? fmt.pct(r.heldAnn.ann) : '<span class="val-zero">--</span>'}</td>
@@ -3294,15 +3280,6 @@ window.CANDIDATES = [];
     });
   }
 
-  /* 全部理财产品标签下方小计数：按 bank:"all" 统计所有银行产品总数（与 renderMgBanks 口径一致） */
-  function tabTotalRows() {
-    return Engine.products({ bank: "all", sort: "name", order: "asc", q: "" }).length;
-  }
-  function updateTabCounts() {
-    const n = tabTotalRows();
-    ["cntAll", "mgCntAll"].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = n; });
-  }
-
   function renderManage() {
     mgCheckAnchor = null; // 列表重建后重置连续选择起点
     let rows = Engine.products({
@@ -3319,21 +3296,24 @@ window.CANDIDATES = [];
       empty.textContent = "暂无产品";
       empty.classList.remove("hidden");
       syncMgCheckAll();
-      updateTabCounts();
       return;
     }
     empty.classList.add("hidden");
     box.innerHTML = rows.map(r => mgRowHtml(r)).join("");
     markMgSorted();
     syncMgCheckAll();
-    updateTabCounts();
   }
 
   const MG_NOTE = "点产品名称可修改信息，配置保存在服务器，建议定期「导出」备份";
   function renderMgToolbar() {
     const bar = $("#mgToolbar");
     bar.innerHTML = `
-      <button class="btn-mini danger" data-mgact="del">删除</button>
+      <span class="mg-acts">
+        <button class="btn-mini" id="btnExport" title="导出备份">导出</button>
+        <button class="btn-mini" id="btnImport" title="导入备份">导入</button>
+        <button class="btn-mini primary" id="btnAddProduct">＋添加</button>
+        <button class="btn-mini danger" data-mgact="del">删除</button>
+      </span>
       <span class="mg-note">${MG_NOTE}</span>
       <span class="sel-count" id="mgSelCount"></span>`;
   }
@@ -4945,8 +4925,8 @@ window.CANDIDATES = [];
   function setFootMsg(text) {
     const el = $("#footMsg"); if (!el) return;
     if (text !== undefined) state.footDefault = text;
-    // 动态进度：① scope=all（一级：所有产品）始终显示；② scope=bank（二级）仅当前银行显示，否则静态
-    if (_bankRefresh && _bankRefresh.busy && (_bankRefresh.scope === "all" || _bankRefresh.bank === state.bank)) {
+    // 动态进度：① scope=all（一级：所有产品）始终显示；② scope=bank（二级）仅发起刷新时所在视图显示
+    if (_bankRefresh && _bankRefresh.busy && (_bankRefresh.scope === "all" || _bankRefresh.crossBank || _bankRefresh.bank === state.bank)) {
       renderRefreshProgress();
       return;
     }
@@ -4957,7 +4937,7 @@ window.CANDIDATES = [];
   // 用户规则 2026-10-15：动态信息只显示「正在刷新的单一产品名称」，不再累加列出所有在途产品。
   function renderRefreshProgress() {
     const el = $("#footMsg"); if (!el) return;
-    if (_bankRefresh.scope !== "all" && _bankRefresh.bank !== state.bank) { el.textContent = state.footDefault || ""; return; }
+    if (_bankRefresh.scope !== "all" && !_bankRefresh.crossBank && _bankRefresh.bank !== state.bank) { el.textContent = state.footDefault || ""; return; }
     const cur = Math.min(_bankRefresh.done + 1, _bankRefresh.total);
     const c = _bankRefresh.current || "";           // 当前正在刷新的单一产品
     el.innerHTML = `正在刷新 <b>${cur}</b>/${_bankRefresh.total}` +
@@ -4980,6 +4960,7 @@ window.CANDIDATES = [];
       _bankRefresh.startAt = Date.now();
       _bankRefresh.endAt = 0;
       _bankRefresh.bank = (scope === "bank") ? state.bank : "";
+      _bankRefresh.crossBank = (scope === "bank") && (state.starOnly || state.heldOnly || state.bank === "all");
       _bankRefresh.scope = scope;
       // 性能优化 E（2026-10-15）：dirty=本批是否真正联网抓取了新数据、需整库重算。
       // nav / quota 模式一定抓了净值/额度 → 恒 true；info 模式先 false，worker 发现「未齐全产品需实际抓取」才置 true。
@@ -5061,7 +5042,7 @@ window.CANDIDATES = [];
         const doneMsg = `${_bankRefresh.total}/${_bankRefresh.total} 个产品${failNote} • 用时 ${elapsed}s • 更新于 ${fmt.clock(_bankRefresh.endAt)}`;
         // 按银行维度持久化「刷新完成消息」（含用时）：此前此处直接写 DOM、不更新 state.footDefault，
         // 而 renderTable 每次都会把 footDefault 重置为静态文案，导致切走再返回该银行后「用时」被覆盖丢失。
-        // 现存入 bankRefreshMsg[bank]（scope=all 全局刷新用特殊键 _all_，对任意银行粘附），renderTable 优先复用它。
+        // 现存入 bankRefreshMsg[bank]（scope=all 全局刷新用特殊键 _all_，仅在「全部」视图复用），renderTable 优先复用它。
         state.bankRefreshMsg = state.bankRefreshMsg || {};
         state.bankRefreshMsg[_bankRefresh.scope === "all" ? "_all_" : _bankRefresh.bank] = doneMsg;
         // 2026-10-18 修复：落盘刷新完成消息（含用时），使关闭网页再打开后「用时 Xs」不丢失
@@ -5093,7 +5074,7 @@ window.CANDIDATES = [];
   // 为什么要按视图而不是固定 state.bank：跨银行视图下刷新队列横跨多家银行，若仍按 state.bank
   // 清理/重建，就会漏掉其它银行的产品（残留旧来源、旧额度，指标行不重算）。
   function currentScopeCodes() {
-    if (state.starOnly || state.heldOnly) {
+    if (state.starOnly || state.heldOnly || state.bank === "all") {
       const s = new Set();
       for (const r of (state.listRows || state.rows || [])) {
         const c = (r.code || "").trim().toUpperCase();
@@ -5186,13 +5167,6 @@ window.CANDIDATES = [];
     state.bank = chip.dataset.bank;
     renderBanks(); renderTable();
   });
-
-  $$(".big-tab").forEach(t => t.addEventListener("click", () => {
-    $$(".big-tab").forEach(x => x.classList.remove("active"));
-    t.classList.add("active");
-    state.tab = t.dataset.tab;
-    renderTable(); renderBanks();
-  }));
 
   $$(".ptable thead th[data-key]").forEach(th => th.addEventListener("click", () => {
     const key = th.dataset.key;
@@ -5520,22 +5494,11 @@ window.CANDIDATES = [];
 
   $("#btnCloseManage").addEventListener("click", userCloseManage);
   $("#manageMask").addEventListener("click", e => { if (e.target === $("#manageMask")) userCloseManage(); });
-  $("#btnAddProduct").addEventListener("click", () => openEdit(null));
 
   $("#mgBankRow").addEventListener("click", e => {
     const chip = e.target.closest(".bank-chip");
     if (!chip) return;
     state.bank = chip.dataset.bank;
-    renderMgBanks(); renderManage();
-  });
-
-  $("#mgTabs").addEventListener("click", e => {
-    const t = e.target.closest(".mg-tab");
-    if (!t) return;
-    $$("#mgTabs .mg-tab").forEach(x => x.classList.remove("active"));
-    t.classList.add("active");
-    state.mgTab = t.dataset.mgtab;
-    if (state.banks && state.banks.length && !state.banks.some(b => b.key === state.bank)) state.bank = state.banks[0].key;
     renderMgBanks(); renderManage();
   });
 
@@ -5568,9 +5531,13 @@ window.CANDIDATES = [];
     th.addEventListener("click", () => mgSetSort(th.dataset.mgkey)));
 
   $("#mgToolbar").addEventListener("click", e => {
-    const btn = e.target.closest("button[data-mgact]");
-    if (!btn) return;
+    const btn = e.target.closest("button");
+    if (!btn || !$("#mgToolbar").contains(btn)) return;
+    if (btn.id === "btnExport") { exportBackup(); return; }
+    if (btn.id === "btnImport") { $("#fImport").click(); return; }
+    if (btn.id === "btnAddProduct") { openEdit(null); return; }
     const act = btn.dataset.mgact;
+    if (!act) return;
     if (act === "all") mgBulkSelectAll(true);
     else if (act === "none") mgBulkSelectAll(false);
     else if (act === "del") mgBulkDelete();
@@ -5592,7 +5559,7 @@ window.CANDIDATES = [];
   $("#fCode").addEventListener("input", onCodeInput);
   $("#fBank").addEventListener("change", () => { toggleNonIcbcFields(); onCodeInput(); });
 
-  $("#btnExport").addEventListener("click", () => {
+  function exportBackup() {
     const data = Engine.exportData();
     // 收藏是前端本地状态，不在 Engine 注册表里，导出时一并备份，
     // 否则恢复备份后会丢掉这些偏好。
@@ -5604,9 +5571,8 @@ window.CANDIDATES = [];
     a.click();
     URL.revokeObjectURL(a.href);
     toast(`已导出备份（含 ${data.favs.length} 个收藏）`);
-  });
+  }
 
-  $("#btnImport").addEventListener("click", () => $("#fImport").click());
   $("#fImport").addEventListener("change", function () {
     const file = this.files && this.files[0];
     if (!file) return;
