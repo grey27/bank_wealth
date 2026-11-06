@@ -331,6 +331,11 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
 .metric b { font-size: calc(15px * var(--fs)); color: #444; }
 .metric b.red { color: var(--red); }
 .metric b.hl-blue { background: #e3f0ff; color: var(--blue); border-radius: 6px; padding: 2px 10px; }
+.metric b .val-red, .metric b .val-green, .metric b .val-zero { font-weight: 700; }
+.metric-held { grid-column: 1 / -1; text-align: left; padding: 10px 12px; }
+.metric-held i, .metric-held b { display: inline; }
+.metric-held i { margin: 0 8px 0 0; }
+.metric-held em { display: block; margin-top: 4px; font-style: normal; font-size: calc(11px * var(--fs)); color: #8a8796; line-height: 1.4; }
 .metric.gold { background: linear-gradient(135deg, #ffe9b8, #ffd98a); }
 .metric.gold b { color: #b0720a; }
 .chart-tabs { display: flex; gap: 4px; padding: 10px 0 4px; border-bottom: 1px solid #f0f0f6; }
@@ -494,12 +499,69 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
 .mg-panel .hero { padding: 12px 12px 6px; }
 .mg-panel .panel { padding: 4px 12px 6px; }
 
-/* 窄屏：头部按钮收紧，避免标题被挤成竖排 */
+/* 窄屏 / 平板：收敛间距与触口，表格仍横向滚动，底部按钮留在视口内 */
+@media (max-width: 1024px) {
+  :root { --topbar-h: 48px; --foot-h: auto; }
+  .topbar { padding: 8px 10px; gap: 8px; }
+  .topbar-title { font-size: calc(15px * var(--fs)); letter-spacing: 0; }
+  .icon-btn, .avatar { min-width: 36px; height: 36px; }
+  .avatar { width: 36px; }
+  .hero { padding: 10px 10px 4px; }
+  .panel { padding: 10px; border-radius: 14px; }
+  .panel-head { gap: 8px; }
+  .big-tab, .mg-tab { padding: 8px 14px; min-height: 40px; }
+  .head-icons { gap: 4px; flex-wrap: nowrap; }
+  .head-icons .icon-btn { min-width: 36px; height: 36px; padding: 0; }
+  .table-wrap { -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+  .bank-chip { min-height: 36px; padding: 8px 14px; }
+  .foot {
+    position: sticky; bottom: 0; z-index: 40;
+    flex-wrap: wrap; justify-content: flex-start; gap: 6px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    background: #efeef8; box-shadow: 0 -1px 0 #e4e1f2;
+  }
+  .foot .foot-btns {
+    position: static; transform: none; flex-wrap: wrap; gap: 8px;
+    max-width: 100%;
+  }
+  .foot .foot-btns button { min-height: 36px; padding: 6px 12px; }
+  #footMsg { flex: 1 1 140px; min-width: 0; text-align: left; line-height: 1.4; }
+  .drawer { padding: 0 8px calc(12px + env(safe-area-inset-bottom)); }
+  .drawer-head { flex-wrap: wrap; padding: calc(8px + env(safe-area-inset-top)) 2px 8px; background: #6a5fd0; }
+  .drawer-head h2 { order: -1; flex: 1 1 auto; text-align: left; font-size: calc(16px * var(--fs)); }
+  .drawer-actions { flex: 1 1 100%; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .pill { min-width: 0; min-height: 44px; padding: 6px 2px; }
+  .pill span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card { padding: 12px; margin-bottom: 8px; }
+  .chart-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .chart-tabs button { flex: 0 0 auto; min-height: 36px; }
+  .range-tabs button { min-height: 32px; }
+  .modal-mask { padding: 12px; align-items: flex-end; }
+  .modal, .modal-lg { max-height: min(92dvh, 760px); border-radius: 16px 16px 0 0; }
+  .modal-lg { max-width: none; }
+  .modal-foot.two { gap: 12px; flex-wrap: wrap; }
+  .btn-primary, .btn-ghost { min-height: 40px; }
+  .mg-head { padding: calc(8px + env(safe-area-inset-top)) 10px 8px; }
+  #mgTabs { flex-wrap: wrap; padding: 8px 10px; }
+  #mgTabs .mg-ops { margin-left: 0; width: 100%; }
+  #mgTabs .mg-ops .btn-mini { min-height: 36px; flex: 1 1 auto; }
+  .mg-toolbar { padding: 8px 10px; }
+  .mg-panel .hero, .mg-panel .panel { padding-left: 8px; padding-right: 8px; }
+}
+@media (max-width: 430px) {
+  .topbar-title { font-size: calc(14px * var(--fs)); }
+  .big-tabs { flex: 1 1 auto; min-width: 0; }
+  .big-tab, .mg-tab { padding: 7px 10px; }
+  .drawer-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ptable th, .ptable td { padding: 6px 8px; }
+  .name-link { width: calc(132px * var(--fs)); }
+}
+/* 窄屏：管理页标题缩小，按钮触口仍保持 36px */
 @media (max-width: 374px) {
-  .topbar { padding: 8px 8px; gap: 6px; }
-    .mg-head h3 { font-size: calc(15px * var(--fs)); }
-  .mg-head .btn-mini { padding: 4px 6px; font-size: calc(10.5px * var(--fs)); }
-  .mg-head .icon-btn { min-width: 30px; height: 30px; font-size: calc(14px * var(--fs)); }
+  .topbar { padding: 6px 6px; gap: 4px; }
+  .mg-head h3 { font-size: calc(15px * var(--fs)); }
+  .mg-head .btn-mini { min-height: 36px; padding: 6px 8px; font-size: calc(12px * var(--fs)); }
+  .mg-head .icon-btn { min-width: 36px; height: 36px; font-size: calc(14px * var(--fs)); }
 }
 
 .tag-mini { font-size: calc(9px * var(--fs)); border-radius: 6px; padding: 1px 4px; margin-left: 4px; white-space: nowrap; }
@@ -650,19 +712,23 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
    全局纵向滚动杆由上方 ≥760px 块里的 html { overflow-y: scroll } 提供。
    手机 / 平板（窄屏或触屏）行为完全不变。 */
 
-/* 手机：收紧 短期/长期 与图标栏，保证一行放下 */
+/* 手机：精选/候选与图标栏收紧间距，但触口保持 ≥36px，避免被旧规则压回 28px */
 @media (max-width: 520px) {
-  .big-tab { padding: 8px 10px; }
-  .head-icons { gap: 3px; }
-  .head-icons .icon-btn { min-width: 30px; }
+  .big-tab { padding: 8px 10px; min-height: 40px; }
+  .head-icons { gap: 4px; }
+  .head-icons .icon-btn { min-width: 36px; height: 36px; }
 }
 
-/* 窄屏：图标栏多了一个「＋」，收紧间距避免溢出 */
+/* 360px：只减间距和字号，不把按钮缩到不可点 */
 @media (max-width: 360px) {
-  .head-icons { gap: 3px; }
-  .head-icons .icon-btn { min-width: 28px; height: 30px; font-size: calc(14px * min(var(--fs), 1.6)); }
-  .big-tab { padding: 8px 12px; }
-  .modal-mask { padding: 12px; }
+  .topbar { padding: 6px 6px; gap: 4px; }
+  .topbar-title { font-size: calc(13px * var(--fs)); }
+  .head-icons { gap: 2px; }
+  .head-icons .icon-btn { min-width: 36px; height: 36px; padding: 0; font-size: calc(14px * min(var(--fs), 1.6)); }
+  .big-tab, .mg-tab { padding: 6px 8px; min-height: 40px; }
+  .modal-mask { padding: 0; }
+  .foot .foot-btns { gap: 6px; }
+  .foot .foot-btns button { padding: 6px 10px; }
 }
 
 /* ---------- 左侧菜单抽屉 ---------- */
@@ -895,6 +961,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
         <div class="metric"><i>3个月年化</i><b class="red" id="dY3m">--</b></div>
         <div class="metric"><i>1年年化</i><b class="red" id="dY1y">--</b></div>
         <div class="metric gold"><i>成立年化</i><b id="dSince">--</b></div>
+        <div class="metric metric-held" id="dHeldBox" title="从个人台账最早买入确认日起的份额加权持仓年化，与列表「持有年化率」同一计算结果；非持仓为 --"><i>持仓年化</i><b id="dHeldAnn">--</b><em id="dHeldNote">从最早买入确认日起，与列表持有年化率同一口径</em></div>
       </div>
     </div>
 
@@ -1135,6 +1202,7 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
 window.MULTI_REAL = window.MULTI_REAL || {};
 </script>
 
+<script src="held-ann.js"></script>
 <script src="panel.js"></script>
 
 <script>
@@ -2059,7 +2127,7 @@ window.CANDIDATES = [];
   let HELD_CODES = null;   // Set<product_code> 已建持仓且有成交；null 表示尚未加载 / 加载失败
   let HELD_FAILED = false;
   let HELD_LOADING = false;
-  let HELD_INFO = null;    // Map<product_code, {buys:[{date,nav,shares}], productId, productName}> 持仓多笔买入；用于「持有年化率（份额加权整体）」列
+  let HELD_INFO = null;    // Map<product_code, {trades:[{type,date,nav,shares}], productId, productName}> 持仓成交；用于「持有年化率」
   async function loadHeldCodes(force) {
     if (HELD_LOADING) return HELD_CODES;
     if (HELD_CODES && !HELD_FAILED && !force) return HELD_CODES;
@@ -2082,17 +2150,16 @@ window.CANDIDATES = [];
           const c = map[String(x.productId)];
           if (!c) return;
           codes.add(c);
-          // 持有年化率（份额加权整体）：收集每笔「买入」成交的份额 + 确认日 + 确认净值（缺失则回落当天序列净值）。
-          const buysRaw = (x.trades || [])
-            .filter(t => t.type === "buy" && t.confirmDate && Number(t.shares) > 0)
-            .sort((a, b) => (a.confirmDate < b.confirmDate ? -1 : a.confirmDate > b.confirmDate ? 1 : 0));
-          if (!buysRaw.length) return;
-          const buys = buysRaw.map(t => ({
-            date: t.confirmDate,
-            nav: (t.confirmNav != null && Number(t.confirmNav) > 0) ? Number(t.confirmNav) : null,
+          // 持有年化率：买入与赎回/卖出都要进纯函数。确认日优先，缺确认日才回落交易日。
+          const trades = (x.trades || []).map(t => ({
+            type: t.type,
+            date: t.confirmDate || t.tradeDate || t.date || "",
+            nav: (t.confirmNav != null && Number(t.confirmNav) > 0) ? Number(t.confirmNav)
+              : (t.nav != null && Number(t.nav) > 0) ? Number(t.nav) : null,
             shares: Number(t.shares),
-          }));
-          info[c] = { buys, productId: String(x.productId), productName: x.productName || "" };
+          })).filter(t => t.date && t.shares > 0);
+          if (!trades.some(t => t.type === "buy")) return;
+          info[c] = { trades, productId: String(x.productId), productName: x.productName || "" };
         });
       }
       HELD_CODES = codes;
@@ -2108,51 +2175,14 @@ window.CANDIDATES = [];
     return HELD_CODES;
   }
   function isCodeHeld(code) { return !!(HELD_CODES && HELD_CODES.has(code)); }
-  // 持有年化率（份额加权整体持仓年化）：
-  // 对每笔买入份额，按「最新净值 / 买入净值 - 1」算该笔收益，并以份额为权重求整体总收益；
-  // 持有天数按份额加权平均，再用 (1+总收益)^(365/加权天数)-1 年化。
-  // 单一买入时退化为该笔的年化（与历史口径一致）。买入净值缺失则回落到确认日（含）后首个有估值日序列净值。
+  // 持有年化率实现在 held-ann.js（列表与详情共用，node --test 直接测该文件）。
+  const computeHeldAnn = window.computeHeldAnn;
   function heldAnnRate(code) {
     const info = HELD_INFO && HELD_INFO[code];
-    if (!info || !info.buys || !info.buys.length) return null;
+    const trades = info && (info.trades || info.buys);
+    if (!trades || !trades.length) return null;
     const daily = (Engine && Engine.dailyOf) ? Engine.dailyOf(code) : [];
-    if (!daily || !daily.length) return null;
-    const last = daily[daily.length - 1];
-    const latestDate = last.date, latestNav = last.nav;
-    if (!latestNav || latestNav <= 0) return null;
-    let totalCost = 0, totalValue = 0, wDays = 0, wShares = 0, earliest = null;
-    for (const b of info.buys) {
-      const q = b.shares;
-      if (!(q > 0)) continue;
-      let nav = b.nav;
-      if (!nav || nav <= 0) {
-        const s = daily.find(p => p.date >= b.date && p.v === 1);
-        if (!s || !s.nav || s.nav <= 0) continue;
-        nav = s.nav;
-      }
-      const d1 = Date.parse(b.date + "T00:00:00Z");
-      const d2 = Date.parse(latestDate + "T00:00:00Z");
-      const days = Math.round((d2 - d1) / 86400000);
-      if (days <= 0) continue;                 // 买入日不早于最新净值日，无法年化（仍计入成本/市值但不参与周期加权）
-      totalCost += q * nav;
-      totalValue += q * latestNav;
-      wDays += q * days;
-      wShares += q;
-      if (!earliest || b.date < earliest) earliest = b.date;
-    }
-    if (!(totalCost > 0) || !(wShares > 0)) return null;
-    const totalRet = totalValue / totalCost - 1;  // 整体持仓总收益率（小数）
-    const avgDays = wDays / wShares;              // 份额加权平均持有天数
-    if (!(avgDays > 0)) return null;
-    const ann = (Math.pow(1 + totalRet, 365 / avgDays) - 1) * 100;
-    return {
-      ann: Math.round(ann * 100) / 100,
-      totalRetPct: Math.round(totalRet * 10000) / 100,
-      avgDays: Math.round(avgDays),
-      startDate: earliest,
-      latestDate,
-      shares: Math.round(wShares * 100) / 100,
-    };
+    return computeHeldAnn ? computeHeldAnn(trades, daily) : null;
   }
 
   /* ---------- 银行标签 ---------- */
@@ -2996,6 +3026,20 @@ window.CANDIDATES = [];
     $("#dY3m").innerHTML = fmt.pct(r.y3m);
     $("#dY1y").innerHTML = fmt.pct(r.y1y);
     $("#dSince").innerHTML = fmt.pct(r.since);
+    const held = heldAnnRate(code);
+    const heldEl = $("#dHeldAnn");
+    const heldNote = $("#dHeldNote");
+    if (heldEl) {
+      heldEl.innerHTML = held ? fmt.pct(held.ann) : '<span class="val-zero">--</span>';
+      heldEl.title = held
+        ? `份额加权整体持仓年化｜总收益 ${held.totalRetPct}%｜加权持有 ${held.avgDays} 天｜起点 ${held.startDate}（最早买入确认日）`
+        : "非持仓，或缺少可用买入净值 / 剩余份额";
+    }
+    if (heldNote) {
+      heldNote.textContent = held
+        ? `从最早买入确认日 ${held.startDate} 起 · 剩余 ${held.shares} 份 · 加权 ${held.avgDays} 天`
+        : "从最早买入确认日起；非持仓或无法计算时为 --";
+    }
     // ★ 收藏按钮状态同步：已收藏 / 收藏
     const pill = $("#btnStarDetail");
     pill.classList.toggle("on", isFav(code));
