@@ -1,9 +1,9 @@
 {
-  "savedAt": "2026-11-05T11:11:02.973Z",
-  "port": 8766,
+  "savedAt": "2026-11-09T08:46:06.765Z",
+  "port": 9877,
   "kind": "core",
   "label": "产品目录与偏好",
-  "count": 8,
+  "count": 7,
   "data": {
     "observer_summary_ok": "{\"WFCZRK05A\":1}",
     "observer_show_time": "0",

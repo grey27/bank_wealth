@@ -178,6 +178,151 @@ function writeStateFile(kind, data, stamp) {
   return out;
 }
 
+// 产品目录只存在于「产品数据.json」。浏览器 localStorage 只是打开页面时的一份只读镜像，
+// 不能反过来覆盖目录，也不再用 deleted 黑名单把删掉的产品留在文件里。
+function normProdCode(code) {
+  return String(code || "").trim().toUpperCase();
+}
+function readRegObject() {
+  const disk = readStateFile("core");
+  let reg = parseNavValue(disk && disk.data && disk.data.observer_reg_v1) || {};
+  if (!reg || typeof reg !== "object" || Array.isArray(reg)) reg = {};
+  if (!Array.isArray(reg.custom)) reg.custom = [];
+  if (!reg.patches || typeof reg.patches !== "object" || Array.isArray(reg.patches)) reg.patches = {};
+  if (!Array.isArray(reg.hidden)) reg.hidden = [];
+  return { disk, reg };
+}
+function catalogCodesOf(reg) {
+  const s = new Set();
+  for (const c of reg.custom || []) {
+    const k = normProdCode(c && c.code);
+    if (k) s.add(k);
+  }
+  for (const k of Object.keys(reg.patches || {})) {
+    const n = normProdCode(k);
+    if (n) s.add(n);
+  }
+  return s;
+}
+function publicRegistry(reg) {
+  return {
+    custom: reg.custom || [],
+    patches: reg.patches || {},
+    hidden: reg.hidden || [],
+  };
+}
+function persistCatalog(reg, scrub) {
+  const disk = readStateFile("core");
+  const data = Object.assign({}, (disk && disk.data) || {});
+  data.observer_reg_v1 = JSON.stringify(publicRegistry(reg));
+  if (typeof scrub === "function") scrub(data);
+  writeStateFile("core", data, new Date().toISOString());
+  return publicRegistry(reg);
+}
+function dropNavCodes(codes) {
+  if (!codes || !codes.size) return 0;
+  const disk = readStateFile("nav");
+  if (!disk || !disk.data) return 0;
+  const map = parseNavValue(disk.data.observer_lookup_real);
+  if (!map || typeof map !== "object") return 0;
+  let n = 0;
+  for (const k of Object.keys(map)) {
+    if (codes.has(normProdCode(k))) { delete map[k]; n++; }
+  }
+  if (!n) return 0;
+  const data = Object.assign({}, disk.data);
+  data.observer_lookup_real = JSON.stringify(map);
+  writeStateFile("nav", data, new Date().toISOString());
+  return n;
+}
+function scrubStoredCode(data, key, code, asArray) {
+  const parsed = parseNavValue(data[key]);
+  if (asArray) {
+    if (!Array.isArray(parsed)) return;
+    const next = parsed.filter((x) => normProdCode(x) !== code);
+    if (next.length !== parsed.length) data[key] = JSON.stringify(next);
+    return;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+  let changed = false;
+  for (const ck of Object.keys(parsed)) {
+    if (normProdCode(ck) === code) { delete parsed[ck]; changed = true; }
+  }
+  if (changed) data[key] = JSON.stringify(parsed);
+}
+function normalizeCatalogItem(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return { error: "缺少产品数据" };
+  const code = normProdCode(body.code);
+  if (!/^[A-Z0-9_-]{1,32}$/.test(code)) return { error: "产品代码不合法" };
+  const bank = String(body.bank || "").trim();
+  if (!/^[a-z0-9]{2,20}$/.test(bank)) return { error: "银行不合法" };
+  const name = String(body.name || "").replace(/[<>"'&]/g, "").trim().slice(0, 80);
+  if (!name) return { error: "请填写产品名称" };
+  const termDays = Math.round(Number(body.termDays));
+  if (!isFinite(termDays) || termDays < 1 || termDays > 3650) return { error: "持有天数不合法" };
+  const established = /^\d{4}-\d{2}-\d{2}$/.test(String(body.established || "")) ? String(body.established) : "";
+  const benchmark = body.benchmark && body.benchmark !== "—" ? String(body.benchmark).slice(0, 500) : "—";
+  return {
+    item: {
+      bank, code, name,
+      manager: String(body.manager || "").replace(/[<>"'&]/g, "").trim().slice(0, 40),
+      term: String(body.term || "daily").slice(0, 20),
+      termDays,
+      risk: /^R[1-5]$/.test(body.risk) ? body.risk : "R2",
+      established,
+      target: isFinite(Number(body.target)) && Number(body.target) > 0 ? Number(body.target) : 0.028,
+      confirm: body.confirm ? Math.round(Number(body.confirm)) : null,
+      stock: String(body.stock || "").slice(0, 40),
+      quota: String(body.quota || "").replace(/[<>"'&]/g, "").trim().slice(0, 40),
+      benchmark,
+    },
+  };
+}
+function readReqJson(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > STATE_MAX_BYTES) req.destroy();
+    });
+    req.on("end", () => {
+      try { resolve(body ? JSON.parse(body) : {}); }
+      catch (e) { reject(e); }
+    });
+    req.on("error", reject);
+  });
+}
+function upsertCatalogItem(item) {
+  const { reg } = readRegObject();
+  const code = item.code;
+  reg.custom = (reg.custom || []).filter((c) => c && normProdCode(c.code) !== code);
+  reg.custom.push(item);
+  for (const ck of Object.keys(reg.patches || {})) {
+    if (normProdCode(ck) === code) delete reg.patches[ck];
+  }
+  reg.hidden = (reg.hidden || []).filter((c) => normProdCode(c) !== code);
+  const registry = persistCatalog(reg);
+  return registry;
+}
+function deleteCatalogItem(code) {
+  const { reg } = readRegObject();
+  const had = (reg.custom || []).some((c) => c && normProdCode(c.code) === code)
+    || Object.keys(reg.patches || {}).some((ck) => normProdCode(ck) === code);
+  reg.custom = (reg.custom || []).filter((c) => c && normProdCode(c.code) !== code);
+  for (const ck of Object.keys(reg.patches || {})) {
+    if (normProdCode(ck) === code) delete reg.patches[ck];
+  }
+  reg.hidden = (reg.hidden || []).filter((c) => normProdCode(c) !== code);
+  const registry = persistCatalog(reg, (data) => {
+    scrubStoredCode(data, "observer_prefer_bank", code, false);
+    scrubStoredCode(data, "observer_info_complete", code, false);
+    scrubStoredCode(data, "observer_summary_ok", code, false);
+    scrubStoredCode(data, "observer_favs", code, true);
+  });
+  const navDropped = dropNavCodes(new Set([code]));
+  return { registry, had, navDropped };
+}
+
 // ---- 刷新顺序.xls 自动重建（用户规则 2026-10-13：刷新顺序日志以 .xls 交付，中文不乱码）----
 // CSV 仅作内部追加存储（UTF-8 BOM）；每次追加后防抖 3s 调 Python(xlwt) 全量重建 .xls。
 const PY_XLS =
@@ -946,26 +1091,8 @@ const server = http.createServer(async (req, res) => {
   function loadRegIndex() {
     const idx = {};
     try {
-      const prod = JSON.parse(fs.readFileSync(path.join(ROOT, "产品数据.json"), "utf8"));
-      let reg = prod && prod.data ? prod.data.observer_reg_v1 : null;
-      if (typeof reg === "string") { try { reg = JSON.parse(reg); } catch (e) { reg = null; } }
-      const rows = [];
-      const gone = new Set();
-      if (reg && Array.isArray(reg.deleted)) {
-        for (const c of reg.deleted) {
-          const k = String(typeof c === "string" ? c : (c && c.code) || "").trim().toUpperCase();
-          if (k) gone.add(k);
-        }
-      }
-      if (reg && Array.isArray(reg.custom)) rows.push(...reg.custom);
-      if (reg && Array.isArray(reg.deleted)) {
-        for (const r of reg.deleted) if (r && typeof r === "object") rows.push(r);
-      }
-      for (let i = rows.length - 1; i >= 0; i--) {
-        const k = String(rows[i] && rows[i].code || "").trim().toUpperCase();
-        if (k && gone.has(k)) rows.splice(i, 1);
-      }
-      for (const r of rows) if (r && r.code) idx[r.code] = r;
+      const { reg } = readRegObject();
+      for (const r of reg.custom || []) if (r && r.code) idx[normProdCode(r.code)] = r;
     } catch (e) {}
     return idx;
   }
@@ -1171,6 +1298,56 @@ const server = http.createServer(async (req, res) => {
   }
   if (u.pathname === "/api/config") return sendJson(res, 200, {});
 
+  // 产品目录：新增 / 修改写入 产品数据.json，删除则从目录和净值文件里去掉该产品。
+  if (u.pathname === "/api/catalog/import" && req.method === "POST") {
+    let j;
+    try { j = await readReqJson(req); }
+    catch (e) { return sendJson(res, 400, { ok: false, message: "请求不是合法 JSON" }); }
+    if (!j || !Array.isArray(j.custom) || typeof j.patches !== "object" || !j.patches || Array.isArray(j.patches)) {
+      return sendJson(res, 400, { ok: false, message: "备份文件格式不正确" });
+    }
+    const custom = [];
+    for (const row of j.custom) {
+      const n = normalizeCatalogItem(row);
+      if (n.error) return sendJson(res, 400, { ok: false, message: n.error });
+      custom.push(n.item);
+    }
+    const { reg } = readRegObject();
+    reg.custom = custom;
+    reg.patches = j.patches;
+    reg.hidden = Array.isArray(j.hidden) ? j.hidden.map((c) => normProdCode(c)).filter(Boolean) : [];
+    const registry = persistCatalog(reg);
+    const keep = catalogCodesOf(registry);
+    const navDisk = readStateFile("nav");
+    const navMap = parseNavValue(navDisk && navDisk.data && navDisk.data.observer_lookup_real) || {};
+    const extra = new Set();
+    for (const ck of Object.keys(navMap)) if (!keep.has(normProdCode(ck))) extra.add(normProdCode(ck));
+    if (extra.size) dropNavCodes(extra);
+    return sendJson(res, 200, { ok: true, message: "已导入", registry });
+  }
+  if (u.pathname === "/api/catalog" && req.method === "POST") {
+    let j;
+    try { j = await readReqJson(req); }
+    catch (e) { return sendJson(res, 400, { ok: false, message: "请求不是合法 JSON" }); }
+    const n = normalizeCatalogItem(j);
+    if (n.error) return sendJson(res, 400, { ok: false, message: n.error });
+    const { reg } = readRegObject();
+    const existed = (reg.custom || []).some((c) => c && normProdCode(c.code) === n.item.code);
+    const registry = upsertCatalogItem(n.item);
+    return sendJson(res, 200, {
+      ok: true,
+      message: existed ? "已保存" : "已添加",
+      registry,
+    });
+  }
+  if (u.pathname === "/api/catalog" && req.method === "DELETE") {
+    const code = normProdCode(u.searchParams.get("code"));
+    if (!code) return sendJson(res, 400, { ok: false, message: "产品代码为空" });
+    const { registry, had, navDropped } = deleteCatalogItem(code);
+    if (!had && !navDropped) return sendJson(res, 200, { ok: true, message: "产品不在服务器上", registry });
+    return sendJson(res, 200, { ok: true, message: "已删除", registry });
+  }
+
   if (u.pathname === "/api/state") {
     // 产品数据持久化（3 文件版）：
     //   GET  → 把 产品数据.json / 净值数据.json / 运行日志.json 三份 data 合并后返回（形状与旧版一致）
@@ -1231,50 +1408,27 @@ const server = http.createServer(async (req, res) => {
         const buckets = { core: {}, nav: {}, log: {} };
         for (const k of Object.keys(clean)) buckets[stateBucketOf(k)][k] = clean[k];
 
-        // —— 彻底删除：目录黑名单（observer_reg_v1.deleted）在服务端也认 ——
-        // data-sync 是「本页全量覆盖文件」。若浏览器这份目录还没带上已删 code（例如换端口后
-        // 用了旧缓存），不能让它把磁盘上的黑名单冲掉，更不能让净值文件把已删产品写回去。
+        // 产品目录只由 /api/catalog 改。浏览器整包同步不能把旧缓存写回 产品数据.json。
         try {
           const disk = readStateFile("core");
-          const diskReg = parseNavValue(disk && disk.data && disk.data.observer_reg_v1) || {};
-          const incReg = parseNavValue(buckets.core.observer_reg_v1) || null;
-          const gone = new Set();
-          const take = (arr) => {
-            if (!Array.isArray(arr)) return;
-            for (const c of arr) {
-              const k = String(typeof c === "string" ? c : (c && c.code) || "").trim().toUpperCase();
-              if (k) gone.add(k);
-            }
-          };
-          take(diskReg.deleted);
-          if (incReg) take(incReg.deleted);
-          if (gone.size && incReg && typeof incReg === "object") {
-            incReg.deleted = Array.from(gone);
-            if (Array.isArray(incReg.custom)) {
-              incReg.custom = incReg.custom.filter((c) => c && !gone.has(String(c.code || "").trim().toUpperCase()));
-            }
-            if (incReg.patches && typeof incReg.patches === "object") {
-              for (const ck of Object.keys(incReg.patches)) {
-                if (gone.has(String(ck).trim().toUpperCase())) delete incReg.patches[ck];
-              }
-            }
-            buckets.core.observer_reg_v1 = JSON.stringify(incReg);
+          if (disk && disk.data && disk.data.observer_reg_v1) {
+            buckets.core.observer_reg_v1 = disk.data.observer_reg_v1;
+          } else {
+            delete buckets.core.observer_reg_v1;
           }
-          if (gone.size) {
-            const navRaw = buckets.nav.observer_lookup_real;
-            const navObj = parseNavValue(navRaw);
-            if (navObj && typeof navObj === "object") {
-              let dropped = 0;
-              for (const ck of Object.keys(navObj)) {
-                if (gone.has(String(ck).trim().toUpperCase())) { delete navObj[ck]; dropped++; }
-              }
-              if (dropped) {
-                buckets.nav.observer_lookup_real = JSON.stringify(navObj);
-                console.log("[state] 已从净值缓存剔除彻底删除的产品 " + dropped + " 条");
-              }
+          const keep = catalogCodesOf(readRegObject().reg);
+          const navObj = parseNavValue(buckets.nav.observer_lookup_real);
+          if (navObj && typeof navObj === "object" && keep.size) {
+            let dropped = 0;
+            for (const ck of Object.keys(navObj)) {
+              if (!keep.has(normProdCode(ck))) { delete navObj[ck]; dropped++; }
+            }
+            if (dropped) {
+              buckets.nav.observer_lookup_real = JSON.stringify(navObj);
+              console.log("[state] 已丢掉不在产品目录里的净值 " + dropped + " 条");
             }
           }
-        } catch (e) { /* 黑名单合并失败不阻断正常写入 */ }
+        } catch (e) { /* 目录保护失败不阻断其它键写入 */ }
 
         // —— 防误覆盖：净值表「断崖式缩水」拒绝写盘 ——
         // 场景：浏览器 localStorage 被清空 / 换设备 / 无痕窗口首次打开，前端把「几乎为空」的
@@ -1434,6 +1588,18 @@ function migrateLegacyIcbcBucket() {
     }
   }
 }
+
+try {
+  const rawDisk = readStateFile("core");
+  const rawReg = parseNavValue(rawDisk && rawDisk.data && rawDisk.data.observer_reg_v1);
+  if (rawReg && Object.prototype.hasOwnProperty.call(rawReg, "deleted")) {
+    delete rawReg.deleted;
+    const data = Object.assign({}, rawDisk.data);
+    data.observer_reg_v1 = JSON.stringify(publicRegistry(rawReg));
+    writeStateFile("core", data, new Date().toISOString());
+    console.log("[catalog] 已去掉产品目录里的删除黑名单");
+  }
+} catch (e) { /* 旧目录没有黑名单字段时不用处理 */ }
 
 server.listen(PORT, () => {
   migrateLegacyIcbcBucket();

@@ -22,7 +22,9 @@
   "use strict";
 
   var PREFIX = "observer_";        // 只同步这个前缀的键
-  var EXCLUDE = { observer_fs: 1 }; // 纯显示偏好（字号）：每台设备各自设置，不随数据走
+  // 字号是本机显示偏好。产品目录 observer_reg_v1 只由服务端 /api/catalog 写入，
+  // 浏览器整包同步不能把它推回去，否则删掉的产品会从旧缓存里复活。
+  var EXCLUDE = { observer_fs: 1, observer_reg_v1: 1 };
   var API = "/api/state";
   var STAMP = "datasync_savedAt";  // 记录本页最后一次同步的文件时间戳（不参与同步）
   var DEBOUNCE_MS = 1200;
@@ -128,22 +130,26 @@
     var myStamp = getStamp();
     var localN = count(collect());
 
+    /* 产品目录始终以服务器为准，不管本页缓存新旧。 */
+    if (srvData.observer_reg_v1) {
+      try { localStorage.setItem("observer_reg_v1", srvData.observer_reg_v1); } catch (e) {}
+    }
     if (srvN > 0 && (!myStamp || (srvAt && srvAt > myStamp))) {
       /* 文件存在，且本页从未同步过 / 文件更新 → 以文件为准 */
       if (localN > 0) backupLocal();   // 覆盖前先留底
       var applied = 0;
       for (var k in srvData) {
         if (!Object.prototype.hasOwnProperty.call(srvData, k)) continue;
-        if (EXCLUDE[k]) continue;                 // 字号等显示偏好不覆盖本机
+        if (k === "observer_fs") continue;        // 字号等显示偏好不覆盖本机
         try { localStorage.setItem(k, srvData[k]); applied++; } catch (e) {}
       }
       setStamp(srvAt);
       lastSig = sig(collect());
       console.log("[data-sync] 已从「" + FILE + "」恢复 " + applied + " 个键（文件保存于 " + srvAt + "）");
     } else if (localN > 0 && (!srvN || !myStamp || (myStamp && srvAt && myStamp > srvAt))) {
-      /* 文件不存在 / 本页从未同步过 / 本页更新 → 写回文件 */
+      /* 文件不存在 / 本页从未同步过 / 本页更新 → 写回文件（不含产品目录） */
       post(collect(), false);
-      console.log("[data-sync] 本页数据已写入「" + FILE + "」");
+      console.log("[data-sync] 本页数据已写入「" + FILE + "」（产品目录保持服务端原样）");
     }
   }
 
