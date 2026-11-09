@@ -1535,17 +1535,39 @@ window.MULTI_REAL = window.MULTI_REAL || {};
   function loadReg() {
     try {
       const r = JSON.parse(localStorage.getItem(REG_KEY) || "{}");
-      return { custom: r.custom || [], patches: r.patches || {}, hidden: r.hidden || [] };
-    } catch (e) { return { custom: [], patches: {}, hidden: [] }; }
+      // deleted：彻底删除黑名单。写在同一份 observer_reg_v1 里，随 data-sync / 同源目录一起走，
+      // 避免另起一套存储。同步合并时跳过这些 code，防止净值缓存或旧目录把产品种回来。
+      return { custom: r.custom || [], patches: r.patches || {}, hidden: r.hidden || [], deleted: r.deleted || [] };
+    } catch (e) { return { custom: [], patches: {}, hidden: [], deleted: [] }; }
   }
   let reg = loadReg();
   function saveReg() {
     try { localStorage.setItem(REG_KEY, JSON.stringify(reg)); } catch (e) {}
   }
+  function normCode(code) { return String(code || "").trim().toUpperCase(); }
+  function deletedSet() {
+    const s = new Set();
+    for (const c of (reg.deleted || [])) { const k = normCode(c); if (k) s.add(k); }
+    return s;
+  }
+  function isDeletedCode(code) { return deletedSet().has(normCode(code)); }
+  function rememberDeleted(code) {
+    const k = normCode(code);
+    if (!k) return;
+    if (!Array.isArray(reg.deleted)) reg.deleted = [];
+    if (!reg.deleted.some(c => normCode(c) === k)) reg.deleted.push(k);
+  }
+  function forgetDeleted(code) {
+    const k = normCode(code);
+    if (!Array.isArray(reg.deleted)) return;
+    reg.deleted = reg.deleted.filter(c => normCode(c) !== k);
+  }
   function baseItems() {
     const out = [];
+    const gone = deletedSet();
     // 2026-10-22：内置种子 SEEDS 已整体移除，目录仅由用户自定义 / 外部数据驱动
     for (const c of reg.custom) {
+      if (!c || gone.has(normCode(c.code))) continue;
       out.push({
         bank: c.bank, code: c.code, name: c.name, manager: c.manager || "", term: c.term || "daily",
         termDays: c.termDays || null,
@@ -1560,9 +1582,10 @@ window.MULTI_REAL = window.MULTI_REAL || {};
   }
   function catalogue() {
     const hidden = new Set(reg.hidden);
+    const gone = deletedSet();
     const seen = new Set();
     return baseItems()
-      .filter(it => !hidden.has(it.code))
+      .filter(it => !hidden.has(it.code) && !gone.has(normCode(it.code)))
       // 同码去重（种子在前、优先保留）：防止「删除过的种子被当作自定义再次添加」等历史数据造成重复行
       .filter(it => !seen.has(it.code) && seen.add(it.code))
       .map(it => {
@@ -1759,7 +1782,8 @@ window.MULTI_REAL = window.MULTI_REAL || {};
   }
   const clean = (s, limit) => String(s || "").replace(/[<>"'&]/g, "").trim().slice(0, limit);
   function checkCode(code) {
-    code = (code || "").trim().toUpperCase();
+    code = normCode(code);
+    if (isDeletedCode(code)) return { ok: true, exists: false, code, deleted: true };
     const all = baseItems();
     for (const it of all) {
       if (it.code === code) {
@@ -1769,8 +1793,11 @@ window.MULTI_REAL = window.MULTI_REAL || {};
     return { ok: true, exists: false, code };
   }
   function addProduct(v) {
+    v.code = normCode(v.code);
     if (!v.bank || !BANKS[v.bank]) return { ok: false, message: "银行不合法" };
     if (!CODE_RE.test(v.code || "")) return { ok: false, message: "产品代码只能是 1~32 位字母、数字、下划线或短横线" };
+    // 用户主动重新添加：从彻底删除黑名单里摘掉，否则目录过滤会把它立刻藏回去
+    forgetDeleted(v.code);
     const dup = checkCode(v.code);
     if (dup.exists) {
       return { ok: false, message: `产品代码 ${v.code} 已存在，不能重复添加；请在列表里点它进入编辑` };
@@ -1795,7 +1822,7 @@ window.MULTI_REAL = window.MULTI_REAL || {};
       patch.edited = true;
       if (existed.origin === "custom") {
         const c = reg.custom.find(x => x.code === v.code);
-        if (c) Object.assign(c, patch, { code: v.code, bank: existed.bank });
+        if (c) Object.assign(c, patch, { code: v.code, bank: (v.bank && BANKS[v.bank]) ? v.bank : existed.bank });
       } else {
         reg.patches[v.code] = patch;
       }
@@ -1815,10 +1842,11 @@ window.MULTI_REAL = window.MULTI_REAL || {};
     return { ok: true, message: "已添加" };
   }
   function updateProduct(code, v) {
-    code = (code || "").trim().toUpperCase();
+    code = normCode(code);
     const it = baseItems().find(x => x.code === code);
     if (!it) return { ok: false, message: "产品不存在" };
-    if (v.bank && v.bank !== it.bank) return { ok: false, message: "银行不可修改，请删除后重新添加" };
+    if (v.bank && !BANKS[v.bank]) return { ok: false, message: "银行不合法" };
+    const nextBank = (v.bank && BANKS[v.bank]) ? v.bank : it.bank;
     const patch = Object.assign({}, reg.patches[code] || {});
     if (v.name) patch.name = clean(v.name, 40);
     if (v.manager !== undefined) patch.manager = clean(v.manager, 20);
@@ -1831,18 +1859,19 @@ window.MULTI_REAL = window.MULTI_REAL || {};
     if (v.quota !== undefined) patch.quota = clean(v.quota, 40);
     if (v.benchmark !== undefined && v.benchmark && v.benchmark !== "—") patch.benchmark = v.benchmark;
     patch.edited = true;
+    if (nextBank !== it.bank) patch.bank = nextBank;
     if (it.origin === "custom") {
       const c = reg.custom.find(x => x.code === code);
-      if (c) Object.assign(c, patch, { code });
+      if (c) Object.assign(c, patch, { code, bank: nextBank });
     } else {
       reg.patches[code] = patch;
     }
     saveReg(); build();
-    return { ok: true, message: "已保存" };
+    return { ok: true, message: nextBank !== it.bank ? "已保存，银行已改为" + BANKS[nextBank].name : "已保存" };
   }
   function saveProduct(code, body) {
     if (code) {
-      code = (code || "").trim().toUpperCase();
+      code = normCode(code);
       const it = baseItems().find(x => x.code === code);
       if (it) return updateProduct(code, body);
       // 不在目录中的产品保存编辑时，转为自定义产品入库，修改得以持久化
@@ -1853,21 +1882,58 @@ window.MULTI_REAL = window.MULTI_REAL || {};
     v.code = (body.code || "").trim().toUpperCase();
     return addProduct(v);
   }
-  function deleteProduct(code) {
-    code = (code || "").trim().toUpperCase();
-    reg.custom = reg.custom.filter(c => c.code !== code);
-    if (reg.patches[code]) delete reg.patches[code];
-    if (reg.hidden.indexOf(code) >= 0) reg.hidden = reg.hidden.filter(c => c !== code);
-    // 同步从「净值数据」删除该产品的 NAV 记录，保证 registry 与净值数据.json 永远一致、不留孤儿
+  // 按产品代码从一份 JSON 对象/数组缓存里摘掉该 code。大小写不一致也算同一只产品。
+  function dropCodeFromJson(key, code) {
+    const raw = localStorage.getItem(key);
+    if (!raw) return false;
+    const obj = JSON.parse(raw);
+    const k = normCode(code);
+    let changed = false;
+    if (Array.isArray(obj)) {
+      const next = obj.filter(x => normCode(x) !== k);
+      if (next.length !== obj.length) { localStorage.setItem(key, JSON.stringify(next)); changed = true; }
+    } else if (obj && typeof obj === "object") {
+      for (const ck of Object.keys(obj)) {
+        if (normCode(ck) === k) { delete obj[ck]; changed = true; }
+      }
+      if (changed) localStorage.setItem(key, JSON.stringify(obj));
+    }
+    return changed;
+  }
+  function purgeProductCaches(code) {
+    const k = normCode(code);
     try {
-      if (window.MULTI_REAL && window.MULTI_REAL[code]) delete window.MULTI_REAL[code];
-      const _lk = "observer_lookup_real";
-      const _raw = localStorage.getItem(_lk);
-      if (_raw) {
-        const _obj = JSON.parse(_raw);
-        if (_obj[code]) { delete _obj[code]; localStorage.setItem(_lk, JSON.stringify(_obj)); }
+      if (window.MULTI_REAL) {
+        for (const ck of Object.keys(window.MULTI_REAL)) {
+          if (normCode(ck) === k) delete window.MULTI_REAL[ck];
+        }
       }
     } catch (e) {}
+    // 净值、额度、收藏、偏好银行、刷新日志都挂在这些键上。只删内存不够：
+    // data-sync 会把 localStorage 全量推到服务端，残留的净值会被下次启动重新合并回来。
+    const keys = [
+      "observer_lookup_real", "observer_lookup_icbc",
+      "observer_favs", "observer_prefer_bank", "observer_info_complete", "observer_summary_ok",
+      "observer_refresh_at", "observer_refresh_dur", "observer_refresh_breakdown", "observer_fetch_fail",
+    ];
+    for (const key of keys) {
+      try { dropCodeFromJson(key, k); } catch (e) {}
+    }
+  }
+  function deleteProduct(code) {
+    code = normCode(code);
+    if (!code) return { ok: false, message: "产品代码为空" };
+    reg.custom = (reg.custom || []).filter(c => c && normCode(c.code) !== code);
+    if (reg.patches) {
+      for (const ck of Object.keys(reg.patches)) {
+        if (normCode(ck) === code) delete reg.patches[ck];
+      }
+    }
+    if (Array.isArray(reg.hidden)) reg.hidden = reg.hidden.filter(c => normCode(c) !== code);
+    // 黑名单必须先于 saveReg：observer_reg_v1 随 data-sync 写进 产品数据.json，
+    // 服务端下次全量覆盖本地时仍认得「这只已彻底删除」。
+    rememberDeleted(code);
+    purgeProductCaches(code);
     saveReg(); build();
     return { ok: true, message: "已删除" };
   }
@@ -1909,14 +1975,14 @@ window.MULTI_REAL = window.MULTI_REAL || {};
   }
   function exportData() {
     return JSON.parse(JSON.stringify({
-      custom: reg.custom, patches: reg.patches, hidden: reg.hidden, exportedAt: fmtTs(new Date()),
+      custom: reg.custom, patches: reg.patches, hidden: reg.hidden, deleted: reg.deleted || [], exportedAt: fmtTs(new Date()),
     }));
   }
   function importData(data) {
     if (!data || !Array.isArray(data.custom) || typeof data.patches !== "object" || !Array.isArray(data.hidden)) {
       return { ok: false, message: "备份文件格式不正确" };
     }
-    reg = { custom: data.custom, patches: data.patches, hidden: data.hidden || [] };
+    reg = { custom: data.custom, patches: data.patches, hidden: data.hidden || [], deleted: data.deleted || [] };
     saveReg(); build();
     return { ok: true, message: "已导入（原配置已备份为 products.bak.json）" };
   }
@@ -1960,7 +2026,7 @@ window.MULTI_REAL = window.MULTI_REAL || {};
   window.Engine = {
     BANKS, TERM_LABEL, TERM_DAYS, HOLIDAYS: Array.from(HOLIDAYS).sort(),
     products, banks, product, refresh: build, rebuildBank, seedRegistryFromString,
-    checkCode, saveProduct, deleteProduct, mgProducts,
+    checkCode, saveProduct, deleteProduct, mgProducts, isDeletedCode,
     exportData, importData, lookup, setIssuer,
     lastRefresh: () => store.last,
     dailyOf: (code) => store.daily[code] || [],
@@ -3408,7 +3474,8 @@ window.CANDIDATES = [];
     fillSelect($("#fRisk"), meta.risks.map(r => ({ key: r, label: r })), it ? it.risk : "R2");
     fillSelect($("#fStock"), (meta.stocks || []).map(x => ({ key: x.key, label: x.label })), it ? (it.stock || "") : "");
     $("#fQuota").value = it && it.quota ? it.quota : "";
-    $("#fBank").disabled = !!code;
+    // 银行可改：改完写入目录 custom.bank，产品会出现在新银行下。净值按 code 存在统一桶，不随银行分桶，无需搬迁。
+    $("#fBank").disabled = false;
     $("#fCode").disabled = !!code;
     $("#fCode").value = it ? it.code : "";
     $("#fName").value = it ? it.name : "";
@@ -3482,6 +3549,7 @@ window.CANDIDATES = [];
     const code = state.editCode;
     const bank = $("#fBank").value;
     const name = $("#fName").value.trim();
+    if (!bank) { showEditErr("请选择银行"); return; }
     if (!name) { showEditErr("请填写产品名称"); return; }
     const holdRaw = $("#fHoldDays").value.trim();
     const holdDays = parseInt(holdRaw, 10);
@@ -3639,11 +3707,25 @@ window.CANDIDATES = [];
           const _reg = JSON.parse(_regRaw) || {};
           const _valid = new Set();
           const _custom = Array.isArray(_reg.custom) ? _reg.custom : Object.values(_reg.custom || {});
-          for (const c of _custom) { if (c && c.code) _valid.add(String(c.code).toUpperCase()); }
-          if (_reg.patches && typeof _reg.patches === "object") for (const k in _reg.patches) _valid.add(String(k).toUpperCase());
-          if (_valid.size) {
+          const _gone = new Set();
+          for (const c of (Array.isArray(_reg.deleted) ? _reg.deleted : [])) {
+            if (c) _gone.add(String(c).toUpperCase());
+          }
+          for (const c of _custom) {
+            const ck = c && c.code ? String(c.code).toUpperCase() : "";
+            if (ck && !_gone.has(ck)) _valid.add(ck);
+          }
+          if (_reg.patches && typeof _reg.patches === "object") {
+            for (const k in _reg.patches) {
+              const ck = String(k).toUpperCase();
+              if (!_gone.has(ck)) _valid.add(ck);
+            }
+          }
+          if (_valid.size || _gone.size) {
             for (const c in lsReal) {
-              if (!_valid.has(String(c).toUpperCase())) { delete lsReal[c]; _pruned++; }
+              const ck = String(c).toUpperCase();
+              // 黑名单优先于「是否在 custom」：已彻底删除的 code 即使旧目录副本还带着，也不许恢复净值
+              if (_gone.has(ck) || !_valid.has(ck)) { delete lsReal[c]; _pruned++; }
             }
           }
         }
@@ -5664,9 +5746,17 @@ window.CANDIDATES = [];
         for (let i = s.length - 1; i >= 0; i--) if (s[i] && s[i][0]) return String(s[i][0]);
         return "";
       };
+      const gone = new Set();
+      try {
+        const regObj = JSON.parse(localStorage.getItem("observer_reg_v1") || "{}");
+        for (const c of (Array.isArray(regObj.deleted) ? regObj.deleted : [])) {
+          if (c) gone.add(String(c).toUpperCase());
+        }
+      } catch (e) {}
       for (const code in real) {
         const o = real[code];
         if (!o) continue;
+        if (gone.has(String(code).toUpperCase())) continue; // 已彻底删除：同源净值不许种回来
         const cur = existing[code];
         if (o.gha === true) {
           // 云端刷新优先：jsb/ceb 始终覆盖（线上 Worker 抓不到，必须靠云端定时任务）
@@ -5679,8 +5769,8 @@ window.CANDIDATES = [];
       if (!added) return;
       localStorage.setItem("observer_lookup_real", JSON.stringify(existing));
       window.MULTI_REAL = window.MULTI_REAL || {};
-      for (const code in real) {
-        if (real[code]) window.MULTI_REAL[code] = real[code];
+      for (const code in existing) {
+        if (existing[code] && !gone.has(String(code).toUpperCase())) window.MULTI_REAL[code] = existing[code];
       }
       if (window.Engine && typeof window.Engine.refresh === "function") window.Engine.refresh();
       console.info("[gha] 已从同源 JSON 叠加 " + added + " 个净值（含 jsb/ceb 云端刷新 + 其余银行补缺）");
@@ -5712,12 +5802,31 @@ window.CANDIDATES = [];
       try { regObj = JSON.parse(regStr); } catch (e) { return false; }
       const custom = Array.isArray(regObj.custom) ? regObj.custom : Object.values(regObj.custom || {});
       if (!custom.length) return false;                   // 空目录不可覆盖，保护旧缓存
+      // 本机已彻底删除的 code：服务端旧快照若还没带上黑名单，合并时继续剔除，避免刷新后又出现
+      try {
+        const prevObj = JSON.parse(localStorage.getItem("observer_reg_v1") || "{}");
+        const prevGone = Array.isArray(prevObj.deleted) ? prevObj.deleted : [];
+        if (prevGone.length) {
+          const gone = new Set(prevGone.map(c => String(c).toUpperCase()));
+          for (const c of (Array.isArray(regObj.deleted) ? regObj.deleted : [])) {
+            if (c) gone.add(String(c).toUpperCase());
+          }
+          regObj.deleted = Array.from(gone);
+          regObj.custom = custom.filter(c => c && !gone.has(String(c.code || "").toUpperCase()));
+          if (regObj.patches && typeof regObj.patches === "object") {
+            for (const k of Object.keys(regObj.patches)) {
+              if (gone.has(String(k).toUpperCase())) delete regObj.patches[k];
+            }
+          }
+          regStr = JSON.stringify(regObj);
+        }
+      } catch (e) {}
       const prev = localStorage.getItem("observer_reg_v1");
       if (prev !== regStr) localStorage.setItem("observer_reg_v1", regStr);  // 有变化才写，省一次 IO
       if (window.Engine && typeof window.Engine.seedRegistryFromString === "function") {
         window.Engine.seedRegistryFromString(regStr);      // 重载内存 reg + 重建列表（在引擎块内执行，避免跨块引用 reg/loadReg）
       }
-      console.info("[gha] 已从同源 产品数据.json 重载产品目录（" + custom.length + " 条 custom，覆盖本地缓存）");
+      console.info("[gha] 已从同源 产品数据.json 重载产品目录（" + (Array.isArray(regObj.custom) ? regObj.custom.length : custom.length) + " 条 custom，覆盖本地缓存）");
       return true;
     })(), 4000);
     if (done === null) console.warn("[gha] 同源目录重载超时（沿用本地缓存，稍后刷新可见）");

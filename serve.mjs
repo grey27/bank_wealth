@@ -950,8 +950,21 @@ const server = http.createServer(async (req, res) => {
       let reg = prod && prod.data ? prod.data.observer_reg_v1 : null;
       if (typeof reg === "string") { try { reg = JSON.parse(reg); } catch (e) { reg = null; } }
       const rows = [];
+      const gone = new Set();
+      if (reg && Array.isArray(reg.deleted)) {
+        for (const c of reg.deleted) {
+          const k = String(typeof c === "string" ? c : (c && c.code) || "").trim().toUpperCase();
+          if (k) gone.add(k);
+        }
+      }
       if (reg && Array.isArray(reg.custom)) rows.push(...reg.custom);
-      if (reg && Array.isArray(reg.deleted)) rows.push(...reg.deleted);
+      if (reg && Array.isArray(reg.deleted)) {
+        for (const r of reg.deleted) if (r && typeof r === "object") rows.push(r);
+      }
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const k = String(rows[i] && rows[i].code || "").trim().toUpperCase();
+        if (k && gone.has(k)) rows.splice(i, 1);
+      }
       for (const r of rows) if (r && r.code) idx[r.code] = r;
     } catch (e) {}
     return idx;
@@ -1217,6 +1230,51 @@ const server = http.createServer(async (req, res) => {
 
         const buckets = { core: {}, nav: {}, log: {} };
         for (const k of Object.keys(clean)) buckets[stateBucketOf(k)][k] = clean[k];
+
+        // —— 彻底删除：目录黑名单（observer_reg_v1.deleted）在服务端也认 ——
+        // data-sync 是「本页全量覆盖文件」。若浏览器这份目录还没带上已删 code（例如换端口后
+        // 用了旧缓存），不能让它把磁盘上的黑名单冲掉，更不能让净值文件把已删产品写回去。
+        try {
+          const disk = readStateFile("core");
+          const diskReg = parseNavValue(disk && disk.data && disk.data.observer_reg_v1) || {};
+          const incReg = parseNavValue(buckets.core.observer_reg_v1) || null;
+          const gone = new Set();
+          const take = (arr) => {
+            if (!Array.isArray(arr)) return;
+            for (const c of arr) {
+              const k = String(typeof c === "string" ? c : (c && c.code) || "").trim().toUpperCase();
+              if (k) gone.add(k);
+            }
+          };
+          take(diskReg.deleted);
+          if (incReg) take(incReg.deleted);
+          if (gone.size && incReg && typeof incReg === "object") {
+            incReg.deleted = Array.from(gone);
+            if (Array.isArray(incReg.custom)) {
+              incReg.custom = incReg.custom.filter((c) => c && !gone.has(String(c.code || "").trim().toUpperCase()));
+            }
+            if (incReg.patches && typeof incReg.patches === "object") {
+              for (const ck of Object.keys(incReg.patches)) {
+                if (gone.has(String(ck).trim().toUpperCase())) delete incReg.patches[ck];
+              }
+            }
+            buckets.core.observer_reg_v1 = JSON.stringify(incReg);
+          }
+          if (gone.size) {
+            const navRaw = buckets.nav.observer_lookup_real;
+            const navObj = parseNavValue(navRaw);
+            if (navObj && typeof navObj === "object") {
+              let dropped = 0;
+              for (const ck of Object.keys(navObj)) {
+                if (gone.has(String(ck).trim().toUpperCase())) { delete navObj[ck]; dropped++; }
+              }
+              if (dropped) {
+                buckets.nav.observer_lookup_real = JSON.stringify(navObj);
+                console.log("[state] 已从净值缓存剔除彻底删除的产品 " + dropped + " 条");
+              }
+            }
+          }
+        } catch (e) { /* 黑名单合并失败不阻断正常写入 */ }
 
         // —— 防误覆盖：净值表「断崖式缩水」拒绝写盘 ——
         // 场景：浏览器 localStorage 被清空 / 换设备 / 无痕窗口首次打开，前端把「几乎为空」的
