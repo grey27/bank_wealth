@@ -171,10 +171,16 @@ function writeStateFile(kind, data, stamp) {
   if (fs.existsSync(f)) {
     try { fs.copyFileSync(f, b); } catch (e) { /* 备份失败不阻断主流程 */ }
   }
-  const tmp = f + ".tmp";
+  // 临时文件名带进程号，避免和中行产品库任务抢同一个 .tmp，把空文件换上正式目录
+  const tmp = f + ".tmp-" + process.pid + "-" + Date.now();
   // 目录/偏好文件小，缩进 2 空格方便人工查看与 diff；两个大文件保持紧凑省体积
-  fs.writeFileSync(tmp, kind === "core" ? JSON.stringify(out, null, 2) : JSON.stringify(out), "utf8");
-  fs.renameSync(tmp, f);   // 原子替换，避免写入中断留下半截文件
+  try {
+    fs.writeFileSync(tmp, kind === "core" ? JSON.stringify(out, null, 2) : JSON.stringify(out), "utf8");
+    fs.renameSync(tmp, f);   // 原子替换，避免写入中断留下半截文件
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (err) { /* 临时文件可能已被换走 */ }
+    throw e;
+  }
   return out;
 }
 

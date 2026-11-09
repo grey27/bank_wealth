@@ -115,9 +115,20 @@ async function fetchPage(index) {
 }
 
 function readRegFile(filePath) {
-  const j = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const name = path.basename(filePath);
+  const text = fs.readFileSync(filePath, "utf8");
+  if (!text.trim()) throw new Error(name + " 是空的，没读到产品目录");
+  let j;
+  try { j = JSON.parse(text); }
+  catch (e) { throw new Error(name + " 内容不完整：" + ((e && e.message) || e)); }
   let reg = j && j.data ? j.data.observer_reg_v1 : null;
-  if (typeof reg === "string") reg = JSON.parse(reg);
+  if (typeof reg === "string") {
+    if (!reg.trim()) reg = null;
+    else {
+      try { reg = JSON.parse(reg); }
+      catch (e) { throw new Error(name + " 里的产品目录不完整：" + ((e && e.message) || e)); }
+    }
+  }
   if (!reg || typeof reg !== "object") reg = {};
   if (!Array.isArray(reg.custom)) reg.custom = [];
   if (!reg.patches || typeof reg.patches !== "object") reg.patches = {};
@@ -174,9 +185,14 @@ function writeCatalog(file, reg) {
     count: Object.keys(data).length,
     data,
   };
-  const tmp = CATALOG_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(out, null, 2), "utf8");
-  fs.renameSync(tmp, CATALOG_FILE);
+  const tmp = CATALOG_FILE + ".tmp-" + process.pid + "-" + Date.now();
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(out, null, 2), "utf8");
+    fs.renameSync(tmp, CATALOG_FILE);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (err) { /* 临时文件可能已被换走 */ }
+    throw e;
+  }
   try { fs.copyFileSync(CATALOG_FILE, CATALOG_BAK); } catch (e) { /* 备份失败不阻断 */ }
 }
 
