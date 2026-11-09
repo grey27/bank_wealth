@@ -165,8 +165,29 @@ export async function fetchBocShelf(asOf) {
   return { asOf: target, pageCount, pagesRead, products: [...byCode.values()], errors };
 }
 
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function readCatalog() {
-  return readRegFile(CATALOG_FILE);
+  let lastErr = null;
+  for (let i = 0; i < 4; i++) {
+    try { return readRegFile(CATALOG_FILE); }
+    catch (e) { lastErr = e; sleepSync(40 * (i + 1)); }
+  }
+  let bak;
+  try { bak = readRegFile(CATALOG_BAK); }
+  catch (e) { throw lastErr || e; }
+  const tmp = CATALOG_FILE + ".tmp-" + process.pid + "-" + Date.now();
+  try {
+    fs.writeFileSync(tmp, fs.readFileSync(CATALOG_BAK));
+    fs.renameSync(tmp, CATALOG_FILE);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (err) { /* 临时文件可能已被换走 */ }
+    throw lastErr || e;
+  }
+  console.warn("[boc-catalog] " + ((lastErr && lastErr.message) || "产品数据.json 读失败") + "，已用备份恢复");
+  return bak;
 }
 
 function writeCatalog(file, reg) {

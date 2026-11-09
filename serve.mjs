@@ -113,11 +113,16 @@ function readNavMap() {
 }
 
 function readStateFile(kind) {
-  try {
-    const j = JSON.parse(fs.readFileSync(statePath(kind), "utf8"));
-    if (j && j.data && typeof j.data === "object" && !Array.isArray(j.data)) return j;
-  } catch (e) { /* 文件不存在或损坏 -> 按空处理 */ }
-  return null;
+  const parseFile = (p) => {
+    try {
+      const text = fs.readFileSync(p, "utf8");
+      if (!text.trim()) return null;
+      const j = JSON.parse(text);
+      if (j && j.data && typeof j.data === "object" && !Array.isArray(j.data)) return j;
+    } catch (e) { /* 文件不存在或损坏 -> 试备份 */ }
+    return null;
+  };
+  return parseFile(statePath(kind)) || parseFile(stateBakPath(kind));
 }
 
 // 业绩比较基准剪短（2026-10-29 用户口径）：≤150 字，在接近 150 字的最近句末标点处截断。
@@ -168,9 +173,10 @@ function writeStateFile(kind, data, stamp) {
     out.data.observer_lookup_real = trimBenchmarksInNav(out.data.observer_lookup_real);
   }
   const f = statePath(kind), b = stateBakPath(kind);
-  if (fs.existsSync(f)) {
-    try { fs.copyFileSync(f, b); } catch (e) { /* 备份失败不阻断主流程 */ }
-  }
+  // 正式文件是空的时不要拿它覆盖备份，否则唯一一份好目录也会丢
+  try {
+    if (fs.existsSync(f) && fs.statSync(f).size > 0) fs.copyFileSync(f, b);
+  } catch (e) { /* 备份失败不阻断主流程 */ }
   // 临时文件名带进程号，避免和中行产品库任务抢同一个 .tmp，把空文件换上正式目录
   const tmp = f + ".tmp-" + process.pid + "-" + Date.now();
   // 目录/偏好文件小，缩进 2 空格方便人工查看与 diff；两个大文件保持紧凑省体积
