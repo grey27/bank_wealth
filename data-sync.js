@@ -14,7 +14,7 @@
  *   4. 本页比文件新                     → 写回文件
  *   之后本页数据一有变化，就防抖写回文件。
  *
- * 只在本地服务（localhost / 127.0.0.1）生效；线上托管自动跳过。
+ * 页面和接口在同一台服务上。无论用域名、局域网还是本机地址打开，都同步这台服务的数据。
  * 临时停用：在网址后加 ?nosync=1
  * 手动控制：控制台执行 DataSync.info() / DataSync.push()
  * ========================================================================== */
@@ -29,9 +29,6 @@
   var STAMP = "datasync_savedAt";  // 记录本页最后一次同步的文件时间戳（不参与同步）
   var DEBOUNCE_MS = 1200;
 
-  var host = (location.hostname || "").toLowerCase();
-  var isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
-  if (!isLocal) return;
   if (/[?&]nosync=1/.test(location.search)) {
     console.log("[data-sync] 已按 ?nosync=1 跳过同步");
     return;
@@ -130,9 +127,12 @@
     var myStamp = getStamp();
     var localN = count(collect());
 
-    /* 产品目录始终以服务器为准，不管本页缓存新旧。 */
+    /* 产品目录和净值都始终以服务器文件为准。手机、电脑各有一份浏览器缓存，不能互相覆盖。 */
     if (srvData.observer_reg_v1) {
       try { localStorage.setItem("observer_reg_v1", srvData.observer_reg_v1); } catch (e) {}
+    }
+    if (srvData.observer_lookup_real) {
+      try { localStorage.setItem("observer_lookup_real", srvData.observer_lookup_real); } catch (e) {}
     }
     if (srvN > 0 && (!myStamp || (srvAt && srvAt > myStamp))) {
       /* 文件存在，且本页从未同步过 / 文件更新 → 以文件为准 */

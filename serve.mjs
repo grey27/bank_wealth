@@ -219,6 +219,27 @@ function persistCatalog(reg, scrub) {
   writeStateFile("core", data, new Date().toISOString());
   return publicRegistry(reg);
 }
+function writeNavMap(map) {
+  const disk = readStateFile("nav");
+  const data = Object.assign({}, (disk && disk.data) || {});
+  data.observer_lookup_real = JSON.stringify(map || {});
+  writeStateFile("nav", data, new Date().toISOString());
+}
+function navMapInCatalog(map) {
+  const keep = catalogCodesOf(readRegObject().reg);
+  if (!keep.size) return map;
+  const out = {};
+  for (const ck of Object.keys(map || {})) {
+    if (keep.has(normProdCode(ck))) out[ck] = map[ck];
+  }
+  return out;
+}
+function mergeNavRecord(code, record) {
+  const map = readNavMap();
+  map[code] = navMergeEntry(map[code], record);
+  writeNavMap(navMapInCatalog(map));
+  return map[code];
+}
 function dropNavCodes(codes) {
   if (!codes || !codes.size) return 0;
   const disk = readStateFile("nav");
@@ -1347,6 +1368,20 @@ const server = http.createServer(async (req, res) => {
     if (!had && !navDropped) return sendJson(res, 200, { ok: true, message: "产品不在服务器上", registry });
     return sendJson(res, 200, { ok: true, message: "已删除", registry });
   }
+  if (u.pathname === "/api/nav" && req.method === "POST") {
+    let j;
+    try { j = await readReqJson(req); }
+    catch (e) { return sendJson(res, 400, { ok: false, message: "请求不是合法 JSON" }); }
+    const code = normProdCode(j && j.code);
+    const record = j && j.record;
+    if (!code || !record || typeof record !== "object" || Array.isArray(record)) {
+      return sendJson(res, 400, { ok: false, message: "缺少产品净值" });
+    }
+    const keep = catalogCodesOf(readRegObject().reg);
+    if (keep.size && !keep.has(code)) return sendJson(res, 404, { ok: false, message: "产品不在目录里" });
+    mergeNavRecord(code, record);
+    return sendJson(res, 200, { ok: true, code });
+  }
 
   if (u.pathname === "/api/state") {
     // 产品数据持久化（3 文件版）：
@@ -1416,38 +1451,24 @@ const server = http.createServer(async (req, res) => {
           } else {
             delete buckets.core.observer_reg_v1;
           }
-          const keep = catalogCodesOf(readRegObject().reg);
-          const navObj = parseNavValue(buckets.nav.observer_lookup_real);
-          if (navObj && typeof navObj === "object" && keep.size) {
-            let dropped = 0;
-            for (const ck of Object.keys(navObj)) {
-              if (!keep.has(normProdCode(ck))) { delete navObj[ck]; dropped++; }
+          const incMap = parseNavValue(buckets.nav.observer_lookup_real);
+          if (incMap && typeof incMap === "object") {
+            const diskMap = readNavMap();
+            const curN = Object.keys(diskMap).length;
+            const incN = Object.keys(incMap).length;
+            const merged = Object.assign({}, diskMap);
+            // 浏览器整包推送可能是另一台设备的旧缓存。按净值日合并，不让旧序列覆盖更新的那份。
+            // 条数断崖（几乎为空）直接忽略这次推送，避免把服务端净值清掉。
+            if (!(curN >= 20 && incN < curN * 0.3)) {
+              for (const ck of Object.keys(incMap)) merged[ck] = navMergeEntry(diskMap[ck], incMap[ck]);
+            } else {
+              console.warn("[state] 净值表缩水保护：磁盘 " + curN + " 条，前端仅推送 " + incN + " 条，已按磁盘保留");
             }
-            if (dropped) {
-              buckets.nav.observer_lookup_real = JSON.stringify(navObj);
-              console.log("[state] 已丢掉不在产品目录里的净值 " + dropped + " 条");
-            }
+            const kept = navMapInCatalog(merged);
+            buckets.nav.observer_lookup_real = JSON.stringify(kept);
           }
         } catch (e) { /* 目录保护失败不阻断其它键写入 */ }
-
-        // —— 防误覆盖：净值表「断崖式缩水」拒绝写盘 ——
-        // 场景：浏览器 localStorage 被清空 / 换设备 / 无痕窗口首次打开，前端把「几乎为空」的
-        // observer_lookup_real 推上来，一次就把服务端 100+ 条净值历史清成几条（本项目实际发生过）。
-        // 规则：新条数 < 旧条数 × 0.3 且旧条数 ≥ 20 → 拒绝该键（保留磁盘旧数据）并显式告警。
-        // 真要清空净值缓存，请直接删除 净值数据.json，而不是靠前端推送。
         const navWarn = [];
-        try {
-          const incomingRaw = buckets.nav.observer_lookup_real;
-          if (incomingRaw) {
-            const curN = Object.keys(readNavMap()).length;
-            const incN = Object.keys(parseNavValue(incomingRaw) || {}).length;
-            if (curN >= 20 && incN < curN * 0.3) {
-              delete buckets.nav.observer_lookup_real;
-              navWarn.push("净值表缩水保护：磁盘 " + curN + " 条，前端仅推送 " + incN + " 条，已拒绝覆盖");
-              console.warn("[state] " + navWarn[0]);
-            }
-          }
-        } catch (e) { /* 保护逻辑异常不阻断正常写入 */ }
 
         const stamp = new Date().toISOString();   // 同一次 POST 三个文件共用一个时间戳
         const files = {};

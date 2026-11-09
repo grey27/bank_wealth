@@ -1,7 +1,7 @@
 // 全银行净值定时刷新（GitHub Actions runner 上运行）
 // - 读取仓库内 产品数据.json 的 registry，得到全部有效产品（custom，含 patches；无 deleted 墓碑）
 // - jsb/ceb：走本机/runner 的 puppeteer-core + 系统 Chrome（线上 Worker 无浏览器，抓不到）
-// - 其余银行：直接调线上 Cloudflare Worker 的 /api/product（复用其 25 家银行抓取逻辑，已免登录直连）
+// - 其余银行：调本机 serve.mjs 的 /api/product（与页面同一套抓取）
 // - 合并策略：保留基线 净值数据.json 的静态字段（risk/holdDays/established/regCode/kind/gha），
 //   仅用抓到的结果覆盖动态字段（series/nav/navDate/navVia/navPort/name/manager/benchmark/quota）
 // - 仅当 observer_lookup_real 内容真正变化时才写盘并更新 savedAt（避免每小时空跑产生无意义 commit）
@@ -15,7 +15,7 @@ const ROOT = path.resolve(__dirname, ".."); // ghpages 仓库根
 const NAV_FILE = path.join(ROOT, "净值数据.json");
 const REG_FILE = path.join(ROOT, "产品数据.json");
 
-const WORKER_BASE = process.env.WORKER_BASE || "https://lclist-finance-api.lclist.workers.dev";
+const WORKER_BASE = process.env.WORKER_BASE || "http://127.0.0.1:8766";
 const JSB_BANK = "jsb";
 const CEB_BANK = "ceb";
 const WORKER_CONCURRENCY = 6;

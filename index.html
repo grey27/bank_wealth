@@ -3625,6 +3625,12 @@ window.CANDIDATES = [];
       map[code] = obj;
       try {
         localStorage.setItem(key, JSON.stringify(map));
+        // 净值立刻写入服务端文件。另一台设备打开时读这份文件，而不是各自浏览器里的旧缓存。
+        fetch("/api/nav", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: code, record: obj }),
+        }).catch(() => {});
       } catch (we) {
         // 写入失败绝不能再静默：最常见原因是 localStorage 配额超限（~5MB），
         // 症状正是「刷新时一切正常、重开后全部退回演示」。必须显式暴露。
@@ -3833,14 +3839,7 @@ window.CANDIDATES = [];
     return Promise.resolve(null);
   }
 
-  // 服务器端抓取代理：银行披露页/接口几乎都不允许跨域（详见各科 bank skill 的 CORS 记录），
-  // 必须由服务端转发。三级来源：
-  //   ① 线上 Serverless 抓取代理（Cloudflare Workers）—— GitHub Pages 纯静态托管时唯一可用路径
-  //   ② 本地同源 ./api/fetch —— 跑本地 serve.mjs（或 server.py）时可用
-  //   ③ 两者都不可达 → lookupProduct 回退到本地已缓存的净值（离线可用）
-  // 把 API_BASE 置空字符串即退化为改造前的纯本地行为。
-  // 已部署: Cloudflare Workers, 源码见 src/serverless/worker.js
-  const API_BASE = "https://lclist-finance-api.lclist.workers.dev";
+  // 抓取一律走当前页面所在的服务端（同源 ./api）。银行接口不给浏览器跨域，由 serve.mjs 转发。
 
   // 单次「查询」的总时限：超过 60 秒还没结果就判定「未查到该产品」（不再无限转圈）
   const LOOKUP_TIMEOUT_MS = 60000;
@@ -3877,38 +3876,8 @@ window.CANDIDATES = [];
     );
   }
 
-  // 路由策略（2026-10-30 改）：
-  //   本地运行时（http://localhost:8766）→ 只走用户本机 IP（同源 ./api，由 serve.mjs 经本机网络
-  //     直连银行/发行方接口，含需无头 Chrome 的 jsb/ceb/bob 等），绝不回落线上 Cloudflare。
-  //   线上托管（lclist.github.io）→ 只走线上 Cloudflare Worker，绝不回落本机 IP。
-  //   两路各自单点、互不兜底，便于公平对比「本机 IP」与「线上 Cloudflare」抓净值耗时。
-  //   调试逃生舱：网址加 ?local=1 恢复旧行为（本机优先、失败回落 Cloudflare；线上反之），用于兜底/验证。
-  // 背景：2026-10-28 为规避用户 IP 被中国理财网/部分银行封禁，本地改为 Cloudflare 优先，
-  //   导致 jsb/ceb/bob 等需真浏览器的银行在线抓不到、其余银行也偏慢。现按用户要求改回本机 IP 优先。
-  const FORCE_LOCAL = /[?&]local=1/.test(location.search);
-  function isLocalRun() {
-    const h = (location.hostname || "").toLowerCase();
-    return h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "[::1]";
-  }
-  (function () {
-    const mode = FORCE_LOCAL ? "debug(?local=1：本机优先+Cloudflare兜底)"
-      : (isLocalRun() ? "本地→本机IP(纯本地，不走线上)" : "线上→Cloudflare(纯线上，不走本机IP)");
-    console.log("[理财产品聚焦] 抓取路由：" + mode);
-  })();
-  function apiGet(pathSuffix, timeoutMs, deadlineAt, opts) {
-    opts = opts || {};
-    const same = () => httpJson("./api" + pathSuffix, budgetMs(timeoutMs, deadlineAt));
-    const remote = () => (API_BASE ? httpJson(API_BASE + "/api" + pathSuffix, budgetMs(timeoutMs, deadlineAt)) : Promise.reject(new Error("no remote api")));
-    if (FORCE_LOCAL) {
-      // 调试模式：本机优先、失败回落 Cloudflare（线上时反之）
-      return isLocalRun() ? same().catch(remote) : remote().catch(same);
-    }
-    if (!isLocalRun()) {
-      // 线上（GitHub Pages）：只走线上 Cloudflare，绝不回落本机 IP
-      return remote();
-    }
-    // 本地(8766)：只走用户本机 IP（serve.mjs 经本机网络抓取），绝不回落线上
-    return same();
+  function apiGet(pathSuffix, timeoutMs, deadlineAt) {
+    return httpJson("./api" + pathSuffix, budgetMs(timeoutMs, deadlineAt));
   }
 
   function fetchFromServer(bank, code, deadlineAt) {
@@ -3919,8 +3888,7 @@ window.CANDIDATES = [];
     // 保证本地→远程两级来源串行重试时，总耗时也不突破 60s 总时限。
     const tm = (bank === "bosc") ? 60000 : (bank === "spdb" || bank === "nbcb" || bank === "fminbank" || bank === "cgb" || bank === "mybank" || bank === "webank") ? 45000 : (bank === "ccb") ? 30000 : 20000;
     const q = "?bank=" + encodeURIComponent(bank) + "&code=" + encodeURIComponent(code);
-    // 本地走本机 IP；线上走 Cloudflare（由 apiGet 按运行环境自动选路，不再按银行强制远端）
-    return apiGet("/fetch" + q, tm, deadlineAt, {});
+    return apiGet("/fetch" + q, tm, deadlineAt);
   }
 
   // 已知 ICBC 产品的权威元数据种子（与 serverless Worker 同步；本地优先命中，无需联网即可补全 风险/成立日/持有天数）
@@ -4023,7 +3991,7 @@ window.CANDIDATES = [];
       (add ? "&add=1" : "") +
       (force ? "&noCache=1" : "");
     const t0 = (typeof performance !== "undefined") ? performance.now() : Date.now();
-    // /api/product 的净值主路径为银行/发行方接口（本地由本机 IP 直连，线上走 Cloudflare），
+    // /api/product 的净值由当前服务端直连银行/发行方接口，
     // 仅「银行都失败」时才由中国理财网兜底（被封用户 IP 时该兜底会失败，属预期，可经 ?local=1 兜底）。
     // 取数超时放宽到 120s：仅中国理财网直连路径（deadlineAt 已放宽到 130s）会真正用到；
     // 其余路径受 deadlineAt(=now+60s) 限制仍 ≤60s（budgetMs 取 min），不受影响。
@@ -5717,12 +5685,7 @@ window.CANDIDATES = [];
   window.openEdit = openEdit;
   window.__appReady = true;
 
-  /* ---------- 方案 B：同源 JSON 叠加（jsb/ceb） ----------
-   * Cloudflare Worker 线上抓不到江苏银行(jsb)/光大银行(ceb)（WAF/瑞数需真 Chrome），
-   * 改由 GitHub Actions runner 定时抓取并写回同源 净值数据.json（带 gha:true 标记）。
-   * 本函数只读同源同名文件、仅叠加 gha:true 的 jsb/ceb 记录，绝不动其它银行的 localStorage。
-   * 合并沿用 restoreLookupReal 的「序列末点更晚者优先」语义，避免把已刷新的数据回退成演示/旧值。
-   */
+  /* 打开页面时再读一次当前服务上的 净值数据.json，用更晚的净值盖过浏览器里的旧缓存。 */
   async function applyGhaNavOverlay() {
     try {
       const resp = await fetch("净值数据.json", { cache: "no-cache" });
@@ -5752,34 +5715,24 @@ window.CANDIDATES = [];
         if (!o) continue;
         if (listed.size && !listed.has(String(code).toUpperCase())) continue;
         const cur = existing[code];
-        if (o.gha === true) {
-          // 云端刷新优先：jsb/ceb 始终覆盖（线上 Worker 抓不到，必须靠云端定时任务）
-          if (!cur || _lastD(o) >= _lastD(cur)) { existing[code] = o; added++; }
-        } else {
-          // 其余银行：仅填补本机缺失的产品（新访客 / 尚未实时抓到的），不覆盖本机已有数据
-          if (!cur) { existing[code] = o; added++; }
-        }
+        // 服务端这条净值更晚（或本机还没有）就换上。电脑刚刷新的结果因此能出现在手机上。
+        if (!cur || _lastD(o) >= _lastD(cur)) { existing[code] = o; added++; }
       }
       if (!added) return;
-      localStorage.setItem("observer_lookup_real", JSON.stringify(existing));
+      try { localStorage.setItem("observer_lookup_real", JSON.stringify(existing)); }
+      catch (e) { console.warn("[gha] 净值写入本机缓存失败，本次仍按服务端数据显示：" + ((e && e.message) || e)); }
       window.MULTI_REAL = window.MULTI_REAL || {};
       for (const code in existing) {
         if (existing[code] && (!listed.size || listed.has(String(code).toUpperCase()))) window.MULTI_REAL[code] = existing[code];
       }
       if (window.Engine && typeof window.Engine.refresh === "function") window.Engine.refresh();
-      console.info("[gha] 已从同源 JSON 叠加 " + added + " 个净值（含 jsb/ceb 云端刷新 + 其余银行补缺）");
+      console.info("[nav] 已用服务端净值更新 " + added + " 个产品");
     } catch (e) {
       console.warn("[gha] 同源净值叠加失败（不影响其它银行）：" + ((e && e.message) || e));
     }
   }
 
-  /* ---------- 方案 B（续）：同源 registry 播种 ----------
-   * 线上（GitHub Pages）以服务端 产品数据.json 为产品目录的唯一权威：每次加载都用最新 registry
-   * 覆盖本地缓存的 observer_reg_v1，确保「线上产品数 == 服务端 registry 数」。
-   * 旧实现仅在 localStorage 无目录时才播种，导致回访浏览器一直沿用「首次访问时」的旧目录快照，
-   * 服务端新增的产品（经由 localhost 提交）永远不上线——表现为线上比服务端少产品（如 161 vs 171）。
-   * 仅当抓取失败 / 返回空目录时才保留旧缓存，避免回退成空白页。
-   * 本地（localhost）由 serve.mjs / data-sync 负责，不抢。 */
+  /* 每次打开都用当前服务上的 产品数据.json 覆盖浏览器里的旧目录。空文件或读失败时保留现有列表。 */
   async function applyGhaRegSeed() {
     const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
     const done = await withTimeout((async () => {
