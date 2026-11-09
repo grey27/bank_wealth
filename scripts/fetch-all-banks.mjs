@@ -9,11 +9,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readStateFile, writeStateFile } from "../db.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, ".."); // ghpages 仓库根
-const NAV_FILE = path.join(ROOT, "净值数据.json");
-const REG_FILE = path.join(ROOT, "产品数据.json");
 
 const WORKER_BASE = process.env.WORKER_BASE || "http://127.0.0.1:8766";
 const JSB_BANK = "jsb";
@@ -57,7 +56,7 @@ function trimBenchmark(s) {
 /* ---------- 读取 registry，得到全部有效产品 ---------- */
 
 function loadProducts() {
-  const p = JSON.parse(fs.readFileSync(REG_FILE, "utf8"));
+  const p = readStateFile("core");
   const reg = safeParseReg(p.data && p.data.observer_reg_v1);
   if (!reg) return [];
   const custom = Array.isArray(reg.custom) ? reg.custom : Object.values(reg.custom || {});
@@ -315,7 +314,7 @@ async function main() {
   console.log("[all] registry 有效产品：" + products.length + " 个，覆盖银行：" +
     Array.from(new Set(products.map((p) => p.bank))).join(","));
 
-  const outer = JSON.parse(fs.readFileSync(NAV_FILE, "utf8"));
+  const outer = readStateFile("nav");
   const realRaw = outer.data && outer.data.observer_lookup_real;
   const real = typeof realRaw === "string" ? JSON.parse(realRaw) : realRaw || {};
 
@@ -359,9 +358,8 @@ async function main() {
     return;
   }
   outer.data.observer_lookup_real = newRealStr;
-  outer.savedAt = new Date().toISOString();
-  fs.writeFileSync(NAV_FILE, JSON.stringify(outer), "utf8");
-  console.log("[all] 完成：已写回 " + path.basename(NAV_FILE) + "（含孤儿清理 " + pruned + " 条，用时 " + ((Date.now() - t0) / 1000).toFixed(1) + "s）");
+  writeStateFile("nav", outer.data, new Date().toISOString());
+  console.log("[all] 完成：已写回净值库（含孤儿清理 " + pruned + " 条，用时 " + ((Date.now() - t0) / 1000).toFixed(1) + "s）");
 }
 
 main().catch((e) => {

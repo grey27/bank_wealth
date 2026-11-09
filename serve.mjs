@@ -24,6 +24,17 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { CACHE_ROOT } from "./deliver/cache_root.mjs";
+import {
+  readStateFile as readStateFileDb,
+  writeStateFile as writeStateFileDb,
+  readLedger,
+  writeLedger,
+  auxGet,
+  auxSet,
+  readPidMap as readPidMapDb,
+  savePidMap as savePidMapDb,
+  clearRefreshLogs,
+} from "./db.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.argv[2]) || 8766;
@@ -103,7 +114,7 @@ const parseNavValue = (v) => {
 };
 function readNavMap() {
   try {
-    const nav = JSON.parse(fs.readFileSync(path.join(ROOT, "净值数据.json"), "utf8"));
+    const nav = readStateFile("nav");
     const data = nav.data || {};
     const real = parseNavValue(data.observer_lookup_real) || {};
     const legacy = parseNavValue(data.observer_lookup_icbc);
@@ -113,16 +124,7 @@ function readNavMap() {
 }
 
 function readStateFile(kind) {
-  const parseFile = (p) => {
-    try {
-      const text = fs.readFileSync(p, "utf8");
-      if (!text.trim()) return null;
-      const j = JSON.parse(text);
-      if (j && j.data && typeof j.data === "object" && !Array.isArray(j.data)) return j;
-    } catch (e) { /* 文件不存在或损坏 -> 试备份 */ }
-    return null;
-  };
-  return parseFile(statePath(kind)) || parseFile(stateBakPath(kind));
+  return readStateFileDb(kind);
 }
 
 // 业绩比较基准剪短（2026-10-29 用户口径）：≤150 字，在接近 150 字的最近句末标点处截断。
@@ -163,31 +165,11 @@ function trimBenchmarksInNav(raw) {
 // 原子写 + 上一版留备份。stamp 由调用方统一传入，保证同一次 POST 的 3 个文件时间戳一致
 // （否则 data-sync.js 下次加载会认为「文件比本页新」而反复回灌）。
 function writeStateFile(kind, data, stamp) {
-  const cfg = STATE_FILES[kind];
-  const out = {
-    savedAt: stamp, port: PORT, kind, label: cfg.label,
-    count: Object.keys(data).length, data,
-  };
-  // 净值表写盘前统一剪短业绩比较基准（见 trimBenchmarksInNav 注释）
-  if (kind === "nav" && typeof out.data.observer_lookup_real === "string") {
-    out.data.observer_lookup_real = trimBenchmarksInNav(out.data.observer_lookup_real);
+  const body = Object.assign({}, data || {});
+  if (kind === "nav" && typeof body.observer_lookup_real === "string") {
+    body.observer_lookup_real = trimBenchmarksInNav(body.observer_lookup_real);
   }
-  const f = statePath(kind), b = stateBakPath(kind);
-  // 正式文件是空的时不要拿它覆盖备份，否则唯一一份好目录也会丢
-  try {
-    if (fs.existsSync(f) && fs.statSync(f).size > 0) fs.copyFileSync(f, b);
-  } catch (e) { /* 备份失败不阻断主流程 */ }
-  // 临时文件名带进程号，避免和中行产品库任务抢同一个 .tmp，把空文件换上正式目录
-  const tmp = f + ".tmp-" + process.pid + "-" + Date.now();
-  // 目录/偏好文件小，缩进 2 空格方便人工查看与 diff；两个大文件保持紧凑省体积
-  try {
-    fs.writeFileSync(tmp, kind === "core" ? JSON.stringify(out, null, 2) : JSON.stringify(out), "utf8");
-    fs.renameSync(tmp, f);   // 原子替换，避免写入中断留下半截文件
-  } catch (e) {
-    try { fs.unlinkSync(tmp); } catch (err) { /* 临时文件可能已被换走 */ }
-    throw e;
-  }
-  return out;
+  return writeStateFileDb(kind, body, stamp, PORT);
 }
 
 // 产品目录只存在于「产品数据.json」。浏览器 localStorage 只是打开页面时的一份只读镜像，
@@ -710,9 +692,8 @@ const server = http.createServer(async (req, res) => {
       const mod = await import(new URL("./scrape/ceb_eoap.mjs", import.meta.url).href);
       if (!accessId && link) accessId = mod.cebAccessIdOf(link);
       // 只给 code 时，从 code→accessId 登记表里取（一个 accessId 只对应一个产品）
-      const accessFile = new URL("./scrape/ceb_eoap_access.json", import.meta.url);
       if (!accessId && code) {
-        try { accessId = (JSON.parse(fs.readFileSync(accessFile, "utf8")) || {})[code] || ""; } catch (e) { accessId = ""; }
+        accessId = auxGet("ceb_access", code) || "";
         if (!accessId) return sendJson(res, 404, { error: "该产品尚未登记分享链 accessId，请用 ?link=<微信分享链> 首次抓取", code });
       }
       const out = await mod.cebEoapFetch({ accessId, proCode: code, period, infoOnly });
@@ -720,11 +701,8 @@ const server = http.createServer(async (req, res) => {
       if (!out) return sendJson(res, 502, { error: "ceb eoap 未取到数据（会话/分享链可能已失效）" });
       // 自动登记 code→accessId，方便下次直接按 code 抓
       try {
-        let map = {};
-        try { map = JSON.parse(fs.readFileSync(accessFile, "utf8")) || {}; } catch (e) { map = {}; }
-        if (out.code && out.accessId && map[out.code] !== out.accessId) {
-          map[out.code] = out.accessId;
-          fs.writeFileSync(accessFile, JSON.stringify(map, null, 2) + "\n");
+        if (out.code && out.accessId && auxGet("ceb_access", out.code) !== out.accessId) {
+          auxSet("ceb_access", out.code, out.accessId);
           console.log("[cebapp] 已登记 " + out.code + " → accessId " + out.accessId);
         }
       } catch (e) { /* 落盘失败不影响返回 */ }
@@ -837,9 +815,8 @@ const server = http.createServer(async (req, res) => {
     if (!prodNo && !rc) return sendJson(res, 400, { error: "missing code / link / shareCode" });
     const t0 = Date.now();
     try {
-      const regFile = new URL("./scrape/comm_share.json", import.meta.url);
       if (!rc && prodNo) {
-        try { rc = (JSON.parse(fs.readFileSync(regFile, "utf8")) || {})[prodNo] || ""; } catch (e) { rc = ""; }
+        rc = auxGet("comm_share", prodNo) || "";
         if (!rc) return sendJson(res, 404, { error: "该产品尚未登记 shareCode，请用 ?link=<微信分享链> 首次抓取", code: prodNo });
       }
       if (prodNo && rc) W.setCommShareCode(prodNo, rc);
@@ -848,11 +825,8 @@ const server = http.createServer(async (req, res) => {
       if (!out) return sendJson(res, 502, { error: "comm app 未取到数据（shareCode 可能不对 / 网络波动）" });
       // 自动落盘 code→shareCode，方便下次直接按 code 抓
       try {
-        let map = {};
-        try { map = JSON.parse(fs.readFileSync(regFile, "utf8")) || {}; } catch (e) { map = {}; }
-        if (out.navViaCode && out.shareCode && map[out.navViaCode] !== out.shareCode) {
-          map[out.navViaCode] = out.shareCode;
-          fs.writeFileSync(regFile, JSON.stringify(map, null, 2) + "\n");
+        if (out.navViaCode && out.shareCode && auxGet("comm_share", out.navViaCode) !== out.shareCode) {
+          auxSet("comm_share", out.navViaCode, out.shareCode);
           console.log("[commapp] 已登记 " + out.navViaCode + " → shareCode " + out.shareCode);
         }
       } catch (e) { /* 落盘失败不影响返回 */ }
@@ -1047,21 +1021,15 @@ const server = http.createServer(async (req, res) => {
   // 该前端是参谋长版 React 构建产物原样复用（_ledger_app/），故按其 /api 契约提供本地数据。
   const LEDGER_DIR = path.join(ROOT, "_ledger_app");
   // 台账持仓的「服务端」存储：放在项目根目录，与 产品数据.json / 净值数据.json 同级，便于备份与查看
-  const LEDGER_DATA = path.join(ROOT, "台账数据.json");
   function readLedgerData() {
     try {
-      const d = JSON.parse(fs.readFileSync(LEDGER_DATA, "utf8"));
+      const d = readLedger();
       if (d && typeof d === "object") return Object.assign({ version: 1, holdings: [], aliases: {}, savedAt: null }, d);
     } catch (e) {}
     return { version: 1, holdings: [], aliases: {}, savedAt: null };
   }
   function writeLedgerData(d) {
-    try {
-      const tmp = LEDGER_DATA + ".tmp";
-      fs.writeFileSync(tmp, JSON.stringify(d, null, 1));
-      fs.renameSync(tmp, LEDGER_DATA);
-      return true;
-    } catch (e) { return false; }
+    try { return writeLedger(d); } catch (e) { return false; }
   }
   function readBody(req, cb) {
     let body = "";
@@ -1075,16 +1043,13 @@ const server = http.createServer(async (req, res) => {
   // 而主页两套数据用「字母数字销售代码」做主键（26G2188A / NYJXLDKJLH90 / 2501260735 …）。
   // 故此处加一层适配：代码 → 稳定数字 id（持久化到 product-id-map.json，重启后不变），
   // 并把 净值数据.json（净值序列）+ 产品数据.json（代销行/期限/成立日/基准）两源合并成台账字段。
-  const PID_MAP_FILE = path.join(LEDGER_DIR, "product-id-map.json");
   function readPidMap() {
-    try {
-      const m = JSON.parse(fs.readFileSync(PID_MAP_FILE, "utf8"));
-      if (m && m.byCode && m.byId && Number(m.next) > 0) return m;
-    } catch (e) {}
+    const m = readPidMapDb();
+    if (m && m.byCode && m.byId && Number(m.next) > 0) return m;
     return { byCode: {}, byId: {}, next: 100001 };
   }
   function savePidMap(m) {
-    try { fs.writeFileSync(PID_MAP_FILE, JSON.stringify(m, null, 1)); } catch (e) {}
+    try { savePidMapDb(m); } catch (e) {}
   }
   function pidFor(code, m) {
     if (m.byCode[code]) return m.byCode[code];
@@ -1433,14 +1398,10 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 400, { error: "bad json" });
         }
 
-        // —— 清理运行日志：删掉 运行日志.json + 运行日志.备份.json ——
         if (j && j.dropLogs === true) {
-          let removed = [];
-          for (const p of [statePath("log"), stateBakPath("log")]) {
-            try { if (fs.existsSync(p)) { fs.unlinkSync(p); removed.push(path.basename(p)); } } catch (e) {}
-          }
-          console.log("[state] 已删除运行日志：" + (removed.join("、") || "无文件可删"));
-          return sendJson(res, 200, { ok: true, dropped: "log", removed });
+          clearRefreshLogs();
+          console.log("[state] 已清空运行日志");
+          return sendJson(res, 200, { ok: true, dropped: "log", removed: ["refresh_state"] });
         }
 
         const data = j && j.data;
@@ -1600,26 +1561,7 @@ const server = http.createServer(async (req, res) => {
 // 启动自愈：把历史遗留的 observer_lookup_icbc 分桶并进 observer_lookup_real 并落盘。
 // 幂等：文件里没有 icbc 键就直接跳过，不会重复改写。
 function migrateLegacyIcbcBucket() {
-  for (const file of ["净值数据.json", "净值数据.备份.json"]) {
-    const p = path.join(ROOT, file);
-    try {
-      if (!fs.existsSync(p)) continue;
-      const j = JSON.parse(fs.readFileSync(p, "utf8"));
-      if (!j || !j.data || !j.data.observer_lookup_icbc) continue;
-      const parse = parseNavValue;
-      const real = parse(j.data.observer_lookup_real) || {};
-      const legacy = parse(j.data.observer_lookup_icbc);
-      let n = 0;
-      for (const c of Object.keys(legacy)) { real[c] = navMergeEntry(real[c], legacy[c]); n++; }
-      j.data = { observer_lookup_real: JSON.stringify(real) };
-      const tmp = p + ".tmp";
-      fs.writeFileSync(tmp, JSON.stringify(j), "utf8");
-      fs.renameSync(tmp, p);
-      console.log("[migrate] " + file + "：已把 " + n + " 项 icbc 分桶并入 real（共 " + Object.keys(real).length + " 项）");
-    } catch (e) {
-      console.warn("[migrate] " + file + " 迁移跳过：" + ((e && e.message) || e));
-    }
-  }
+  // 旧的 icbc 分桶在导入 wealth.sqlite 时已经并进 nav_snapshot。
 }
 
 try {

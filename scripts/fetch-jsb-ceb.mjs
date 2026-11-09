@@ -14,11 +14,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readStateFile, writeStateFile } from "../db.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
-const NAV_FILE = path.join(ROOT, "净值数据.json");
-const REG_FILE = path.join(ROOT, "产品数据.json");
 // 随仓库提交的小清单（仅 jsb/ceb 产品）：避免暴露/提交完整 registry，且显式可控。
 // 新增 jsb/ceb 产品时，在此追加一条；缺省则回退解析 产品数据.json。
 const MANIFEST_FILE = path.join(__dirname, "jsb-ceb-codes.json");
@@ -161,7 +160,7 @@ function collectJsbCebStatic() {
     }
   }
   // 回退：解析 产品数据.json 的 observer_reg_v1.custom
-  const p = JSON.parse(fs.readFileSync(REG_FILE, "utf8"));
+  const p = readStateFile("core");
   const reg = safeParseReg(p.data && p.data.observer_reg_v1);
   if (!reg) return map;
   const custom = reg.custom;
@@ -210,7 +209,7 @@ async function main() {
   console.log("[jsb-ceb] 从 registry 发现待抓产品：" + codes.join(", "));
 
   // 读取现有净值库
-  const outer = JSON.parse(fs.readFileSync(NAV_FILE, "utf8"));
+  const outer = readStateFile("nav");
   const realRaw = outer.data && outer.data.observer_lookup_real;
   const real = typeof realRaw === "string" ? JSON.parse(realRaw) : realRaw || {};
 
@@ -298,12 +297,11 @@ async function main() {
   }
 
   outer.data.observer_lookup_real = newRealStr;
-  outer.savedAt = new Date().toISOString();
-  fs.writeFileSync(NAV_FILE, JSON.stringify(outer), "utf8");
+  writeStateFile("nav", outer.data, new Date().toISOString());
 
   const okCount = results.filter((r) => r.ok).length;
   const ms = ((Date.now() - t0) / 1000).toFixed(1);
-  console.log("[jsb-ceb] 完成：成功 " + okCount + "/" + results.length + "，用时 " + ms + "s，已写回 " + path.basename(NAV_FILE));
+  console.log("[jsb-ceb] 完成：成功 " + okCount + "/" + results.length + "，用时 " + ms + "s，已写回净值库");
   console.log("[jsb-ceb] 明细：" + JSON.stringify(results));
 }
 

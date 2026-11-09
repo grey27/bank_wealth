@@ -27,6 +27,7 @@ _cdp_profile*/
 # --- 根目录散落的调试脚本 / 数据（仅 serve.mjs 等 essentials 随仓库，其余忽略） ---
 /*.mjs
 !serve.mjs
+!db.mjs
 /*.sh
 deliver/*.json
 scripts/dbg-*
@@ -82,8 +83,12 @@ scrape/cmbwm_profile/
 # --- 其它散落的数据/文档 ---
 台账数据.json
 产品数据.json
+净值数据.json
+净值数据.备份.json
 中行产品库日志.jsonl
 运行日志*.json
+wealth.sqlite
+wealth.sqlite-*
 销售代码-预判规则v3.json
 无法预判-默认银行序.json
 刷新顺序*

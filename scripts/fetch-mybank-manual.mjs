@@ -18,11 +18,10 @@
 import fs from "node:fs";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readStateFile, writeStateFile } from "../db.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
-const NAV_FILE = path.join(ROOT, "净值数据.json");
-const REG_FILE = path.join(ROOT, "产品数据.json");
 const MYBANK = "mybank";
 
 // 调试开关（供 GitHub Actions workflow_dispatch 传入）：
@@ -53,7 +52,7 @@ function safeParseReg(raw) {
 function collectMybankCodes() {
   const map = {}; // code -> { name, manager }
   let p;
-  try { p = JSON.parse(fs.readFileSync(REG_FILE, "utf8")); } catch (e) { console.warn("[mybank-manual] 注册表解析失败：" + e.message); return map; }
+  try { p = readStateFile("core"); } catch (e) { console.warn("[mybank-manual] 注册表解析失败：" + e.message); return map; }
   const reg = safeParseReg(p.data && p.data.observer_reg_v1);
   if (!reg) { console.warn("[mybank-manual] 未发现 observer_reg_v1，回退全文扫描"); }
   const custom = reg ? reg.custom : null;
@@ -104,7 +103,7 @@ async function main() {
 
   // 读取现有净值库（七字段也存于此处）
   let outer;
-  try { outer = JSON.parse(fs.readFileSync(NAV_FILE, "utf8")); } catch (e) { console.error("[mybank-manual] 净值数据.json 解析失败：" + e.message); process.exit(1); }
+  try { outer = readStateFile("nav"); } catch (e) { console.error("[mybank-manual] 净值库读取失败：" + e.message); process.exit(1); }
   const realRaw = outer.data && outer.data.observer_lookup_real;
   const real = typeof realRaw === "string" ? JSON.parse(realRaw) : realRaw || {};
 
@@ -171,9 +170,9 @@ async function main() {
   outer.data.observer_lookup_real = newRealStr;
   outer.count = Object.keys(real).length;
   outer.savedAt = new Date().toISOString();
-  fs.writeFileSync(NAV_FILE, JSON.stringify(outer), "utf8");
+  writeStateFile("nav", outer.data, new Date().toISOString());
   const ms = ((Date.now() - t0) / 1000).toFixed(1);
-  console.log("[mybank-manual] 完成：写回 " + path.basename(NAV_FILE) + "，" + results.filter((r) => r.ok === true).length + " 只补全，用时 " + ms + "s");
+  console.log("[mybank-manual] 完成：写回净值库，" + results.filter((r) => r.ok === true).length + " 只补全，用时 " + ms + "s");
   console.log("[mybank-manual] 明细：" + JSON.stringify(results));
 }
 

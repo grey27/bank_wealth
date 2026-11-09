@@ -8,14 +8,9 @@
  *
  * 已在其它银行名下的代码不改银行。这次查询里没有的中行产品会从目录去掉。
  */
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const CATALOG_FILE = path.join(ROOT, "产品数据.json");
-const CATALOG_BAK = path.join(ROOT, "产品数据.备份.json");
-const LOG_FILE = path.join(ROOT, "中行产品库日志.jsonl");
+import { readStateFile, writeStateFile, appendBocLog } from "../db.mjs";
 const SOURCE = "https://e.boc.cn/ezcms/finance/v1/query";
 const BANK = "boc";
 const PAGE_ROWS = 100;
@@ -164,51 +159,17 @@ export async function fetchBocShelf() {
   return { total, pagesRead, rowsFetched, products, errors, complete };
 }
 
-function readRegFile(filePath) {
-  const name = path.basename(filePath);
-  const text = fs.readFileSync(filePath, "utf8");
-  if (!text.trim()) throw new Error(name + " 是空的，没读到产品目录");
-  let j;
-  try { j = JSON.parse(text); }
-  catch (e) { throw new Error(name + " 内容不完整：" + ((e && e.message) || e)); }
-  let reg = j && j.data ? j.data.observer_reg_v1 : null;
+function readCatalog() {
+  const file = readStateFile("core") || { data: {}, port: 8766 };
+  let reg = file.data && file.data.observer_reg_v1;
   if (typeof reg === "string") {
-    if (!reg.trim()) reg = null;
-    else {
-      try { reg = JSON.parse(reg); }
-      catch (e) { throw new Error(name + " 里的产品目录不完整：" + ((e && e.message) || e)); }
-    }
+    try { reg = JSON.parse(reg); } catch (e) { reg = {}; }
   }
   if (!reg || typeof reg !== "object") reg = {};
   if (!Array.isArray(reg.custom)) reg.custom = [];
   if (!reg.patches || typeof reg.patches !== "object") reg.patches = {};
   if (!Array.isArray(reg.hidden)) reg.hidden = [];
-  return { file: j, reg };
-}
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function readCatalog() {
-  let lastErr = null;
-  for (let i = 0; i < 4; i++) {
-    try { return readRegFile(CATALOG_FILE); }
-    catch (e) { lastErr = e; sleepSync(40 * (i + 1)); }
-  }
-  let bak;
-  try { bak = readRegFile(CATALOG_BAK); }
-  catch (e) { throw lastErr || e; }
-  const tmp = CATALOG_FILE + ".tmp-" + process.pid + "-" + Date.now();
-  try {
-    fs.writeFileSync(tmp, fs.readFileSync(CATALOG_BAK));
-    fs.renameSync(tmp, CATALOG_FILE);
-  } catch (e) {
-    try { fs.unlinkSync(tmp); } catch (err) { /* 临时文件可能已被换走 */ }
-    throw lastErr || e;
-  }
-  console.warn("[boc-catalog] " + ((lastErr && lastErr.message) || "产品数据.json 读失败") + "，已用备份恢复");
-  return bak;
+  return { file, reg };
 }
 
 function writeCatalog(file, reg) {
@@ -219,27 +180,11 @@ function writeCatalog(file, reg) {
     patches: reg.patches || {},
     hidden: reg.hidden || [],
   });
-  const out = {
-    savedAt: new Date().toISOString(),
-    port: file.port || 8766,
-    kind: file.kind || "core",
-    label: file.label || "产品目录与偏好",
-    count: Object.keys(data).length,
-    data,
-  };
-  const tmp = CATALOG_FILE + ".tmp-" + process.pid + "-" + Date.now();
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(out, null, 2), "utf8");
-    fs.renameSync(tmp, CATALOG_FILE);
-  } catch (e) {
-    try { fs.unlinkSync(tmp); } catch (err) { /* 临时文件可能已被换走 */ }
-    throw e;
-  }
-  try { fs.copyFileSync(CATALOG_FILE, CATALOG_BAK); } catch (e) { /* 备份失败不阻断 */ }
+  writeStateFile("core", data, new Date().toISOString(), file.port || 8766);
 }
 
 function appendLog(entry) {
-  fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + "\n", "utf8");
+  appendBocLog(entry);
 }
 
 export async function syncBocCatalog() {
@@ -384,7 +329,7 @@ export function startBocCatalogSchedule() {
   };
   setInterval(tick, 60 * 1000);
   setTimeout(tick, 8000);
-  console.log("[boc-catalog] 已排程：每天 07:30（北京时间）之后更新中国银行产品库，日志 " + path.basename(LOG_FILE));
+  console.log("[boc-catalog] 已排程：每天 07:30（北京时间）之后更新中国银行产品库，日志写入 wealth.sqlite");
 }
 
 const invoked = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);

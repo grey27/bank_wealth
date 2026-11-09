@@ -6,6 +6,7 @@
     "fetch": "node scripts/fetch-jsb-ceb.mjs"
   },
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
     "puppeteer-core": "^23.11.0"
   }
 }

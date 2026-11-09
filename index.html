@@ -5688,7 +5688,7 @@ window.CANDIDATES = [];
   /* 打开页面时再读一次当前服务上的 净值数据.json，用更晚的净值盖过浏览器里的旧缓存。 */
   async function applyGhaNavOverlay() {
     try {
-      const resp = await fetch("净值数据.json", { cache: "no-cache" });
+      const resp = await fetch("./api/state?t=" + Date.now(), { cache: "no-cache" });
       if (!resp.ok) return;
       const data = await resp.json();
       const realRaw = data && data.data && data.data.observer_lookup_real;
@@ -5736,7 +5736,7 @@ window.CANDIDATES = [];
   async function applyGhaRegSeed() {
     const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
     const done = await withTimeout((async () => {
-      const resp = await fetch("产品数据.json", { cache: "no-cache" });
+      const resp = await fetch("./api/state?t=" + Date.now(), { cache: "no-cache" });
       if (!resp.ok) return false;
       const p = await resp.json();
       let regStr = p && p.data && p.data.observer_reg_v1;
@@ -5753,7 +5753,7 @@ window.CANDIDATES = [];
       if (window.Engine && typeof window.Engine.seedRegistryFromString === "function") {
         window.Engine.seedRegistryFromString(regStr);      // 重载内存 reg + 重建列表（在引擎块内执行，避免跨块引用 reg/loadReg）
       }
-      console.info("[gha] 已从同源 产品数据.json 重载产品目录（" + (Array.isArray(regObj.custom) ? regObj.custom.length : custom.length) + " 条 custom，覆盖本地缓存）");
+      console.info("[gha] 已从服务端目录重载产品（" + (Array.isArray(regObj.custom) ? regObj.custom.length : custom.length) + " 条 custom，覆盖本地缓存）");
       return true;
     })(), 4000);
     if (done === null) console.warn("[gha] 同源目录重载超时（沿用本地缓存，稍后刷新可见）");
