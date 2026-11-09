@@ -1627,4 +1627,7 @@ server.listen(PORT, () => {
   console.log("理财产品聚焦 本地服务已启动： http://localhost:" + PORT + "/");
   console.log("  实时抓取已启用（含宁波银行）：/api/fetch?bank=nbcb&code=<产品代码>");
   console.log("  请用上面的 http:// 地址打开 index.html（不要用 file://，否则浏览器无法跨域抓取）。");
+  import("./scripts/boc-catalog.mjs")
+    .then((m) => m.startBocCatalogSchedule())
+    .catch((e) => console.warn("[boc-catalog] 定时任务没有启动：" + ((e && e.message) || e)));
 });
