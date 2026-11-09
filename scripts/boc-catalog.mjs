@@ -3,7 +3,7 @@
  * 把符合筛选条件的产品补进 产品数据.json 的中国银行（boc）目录。
  *
  * 接口：POST https://e.boc.cn/ezcms/finance/v1/query
- * 条件：在售、存续期内、代销理财、个人客户、每日申赎或每日申购定期赎回、低风险或中低风险。
+ * 条件：在售、存续期内、代销理财、个人客户、每日申赎或每日申购定期赎回、只收中低风险。
  * 分页：start/rows，每页 100，按 totalNum 翻完。
  *
  * 已在其它银行名下的代码不改银行。这次查询里没有的中行产品会从目录去掉。
@@ -25,7 +25,7 @@ const QUERY_FILTERS = [
   { key: "productType", value: ["代销理财产品"] },
   { key: "salesTarget", value: ["个人客户", "YYY", "YYN", "YNY", "YNN"] },
   { key: "term", value: ["每日申购，定期赎回", "每日申赎"] },
-  { key: "riskLevel", value: ["低风险", "中低风险"] },
+  { key: "riskLevel", value: ["中低风险"] },
 ];
 const RISK_OF = { "低风险": "R1", "中低风险": "R2", "中风险": "R3", "中高风险": "R4", "高风险": "R5" };
 
@@ -331,7 +331,7 @@ export async function syncBocCatalog() {
     addedSample: added.slice(0, 30),
     updatedSample: updated.slice(0, 30),
     removedSample: removedStale.slice(0, 30),
-    note: "在售、存续期内、代销、个人客户、每日申赎或每日申购定期赎回、低风险或中低风险。分页拉全后才写入。名称里没有“N天”的，持有天数暂记 1。",
+    note: "在售、存续期内、代销、个人客户、每日申赎或每日申购定期赎回、只收中低风险。分页拉全后才写入。名称里没有“N天”的，持有天数暂记 1。",
   };
   appendLog(entry);
   const line = "[boc-catalog] 共 " + shelf.total
