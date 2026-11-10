@@ -4784,8 +4784,8 @@ window.CANDIDATES = [];
   }
 
   let _singleRefreshBusy = false;
-  // 详情页「刷新」按钮：强制重新联网抓取单个产品的真实净值，落盘后重建列表与抽屉，
-  // 并在 localStorage 记录手动刷新时间（供「最新表现」卡片展示）。
+  // 详情页「刷新」按钮：随时重新抓取，不受列表「3 小时内不重复刷新」限制。
+  // 落盘后重建列表与抽屉，并记录手动刷新时间。
   async function refreshSingleProduct(code) {
     code = (code || "").trim().toUpperCase();
     if (!code) return;
@@ -4820,7 +4820,7 @@ window.CANDIDATES = [];
   }
 
   /* ---------- 主页列表批量刷新（灰色脚注行「刷新」按钮） ----------
-     - 按点击时的当前排序快照排队；今天已刷过的产品排到队尾兜底，优先补今天还没刷的；
+     - 按上次更新时间从旧到新排队；最近 3 小时更新过的不进队列；详情页刷新不受此限；
      - 刷新期间列表不实时重渲染，只在进度条文案上推进；全部完成后重建一次列表；
      - 刷新期间点其它列排序：列表立即按新排序+已落盘的最新净值重渲染，但刷新队列
        保持原快照顺序继续（不受新排序影响）；
@@ -4828,11 +4828,19 @@ window.CANDIDATES = [];
   var _bankRefresh = { busy: false, token: 0, done: 0, total: 0, fail: 0, last: "", endAt: 0, startAt: 0, current: "", inFlight: [], bank: "", scope: "bank", dirty: false };
   var BR_CONC = 4; // 并发抓取数，与工具栏「刷新」一致
 
-  function isRefreshedToday(code) {
+  var LIST_REFRESH_GAP = 3 * 60 * 60 * 1000;
+
+  function refreshedAtOf(code) {
     const t = state.refreshAt && state.refreshAt[code];
-    if (!t) return false;
-    const d = new Date(t), n = new Date();
-    return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+    const n = Number(t);
+    return n > 0 ? n : 0;
+  }
+  function refreshedWithin3h(code) {
+    const t = refreshedAtOf(code);
+    return t > 0 && (Date.now() - t) < LIST_REFRESH_GAP;
+  }
+  function byOldestRefresh(a, b) {
+    return (a.at || 0) - (b.at || 0);
   }
 
   function markRefreshedAt(code) {
@@ -4843,34 +4851,6 @@ window.CANDIDATES = [];
       m[code] = t;
       localStorage.setItem("observer_refresh_at", JSON.stringify(m));
     } catch (e) {}
-  }
-
-  // 本地是否已有完整净值序列（至少 1 个点）
-  function hasNetValue(code) {
-    const rec = (window.MULTI_REAL && window.MULTI_REAL[code]) || null;
-    return !!(rec && rec.series && rec.series.length);
-  }
-
-  // 刷新优先级（2026-10-29 用户规则）：刷净值时优先刷「还没刷到净值」的产品 ——
-  //   0 = 上次刷新被标记为「未抓到」(fetchFail)           → 最先重试
-  //   1 = 本地从无净值序列（从来没抓到过）                  → 次之
-  //   2 = 今天尚未刷新（有净值但需更新到最新）              → 再次
-  //   3 = 今天已刷新过（可最后兜底）                       → 最后
-  // 这样网商等银行里「反复未抓到」的产品每次都排到队首，不再被「今天已刷」的产品淹没。
-  function refreshPriority(code) {
-    if (isFetchFailed(code)) return 0;          // 未抓到 → 最先
-    if (!hasNetValue(code)) return 1;           // 从无净值 → 次之
-    if (!isRefreshedToday(code)) return 2;      // 今天未刷 → 再次
-    return 3;                                   // 今天已刷 → 兜底
-  }
-
-  // 基于「快照时固化」的 ff/nv/rf 标记算优先级（不受 clearTimeColumns 清未抓到标记影响）：
-  // clearTimeColumns 会在排序前清空 observer_fetch_fail，故排序必须用构建快照时捕获的 ff，而非实时 isFetchFailed。
-  function refreshPriorityOf(item) {
-    if (item.ff) return 0;
-    if (!item.nv) return 1;
-    if (!item.rf) return 2;
-    return 3;
   }
 
   // 抓取失败标记（用户规则 2026-10-13：503 / 429 等没抓到 → 列表「刷新来源」列显示「未抓到」；
@@ -5094,64 +5074,47 @@ window.CANDIDATES = [];
     });
   }
 
-  // 当前银行产品列表（已按当前排序渲染的 state.listRows 快照），去重后作为刷新队列
-  function buildBankSnap() {
-    const seen = new Set(); const snap = [];
-    for (const r of (state.listRows || state.rows || [])) {
+  // 列表刷新队列：最近 3 小时更新过的跳过；其余按上次更新时间从旧到新。从未更新的排最前。
+  function takeListRefresh(rows) {
+    const seen = new Set();
+    const snap = [];
+    let skipped = 0;
+    for (const r of rows || []) {
       const code = (r.code || "").trim().toUpperCase();
       if (!code || seen.has(code)) continue;
       seen.add(code);
-      // ff/nv/rf 在快照构建时即捕获：clearTimeColumns 会在排序前清空「未抓到」标记，
-      // 若排序时再实时读 isFetchFailed 会丢失优先级，故把判定结果固化进快照。
-      snap.push({ code, bank: r.bank, name: r.name, regCode: r.regCode || null,
-        rf: isRefreshedToday(code), ff: isFetchFailed(code), nv: hasNetValue(code) });
+      if (refreshedWithin3h(code)) { skipped++; continue; }
+      snap.push({ code, bank: r.bank, name: r.name, regCode: r.regCode || null, at: refreshedAtOf(code) });
     }
-    return snap;
+    snap.sort(byOldestRefresh);
+    return { snap, skipped };
   }
-  // 当前视图的刷新作用域：
-  //   收藏★/持有$ 是跨银行视图（state.listRows 里各银行产品混合）→ 作用域 = 当前列表的全部 code；
-  //   普通视图 → 单银行（state.bank）。
-  // 为什么要按视图而不是固定 state.bank：跨银行视图下刷新队列横跨多家银行，若仍按 state.bank
-  // 清理/重建，就会漏掉其它银行的产品（残留旧来源、旧额度，指标行不重算）。
-  function currentScopeCodes() {
-    if (state.starOnly || state.heldOnly || state.bank === "all") {
-      const s = new Set();
-      for (const r of (state.listRows || state.rows || [])) {
-        const c = (r.code || "").trim().toUpperCase();
-        if (c) s.add(c);
-      }
-      return s;
-    }
-    return state.bank; // 字符串：银行 key，交给下游按银行展开
-  }
-  // 刷净值：只重新抓取净值（信息若已补全则跳过），先清【当前银行】的「抓取时间 / 时间分解」
+  // 刷净值：只重新抓取净值（信息若已补全则跳过），先清本轮产品的「抓取时间 / 时间分解」
   async function refreshBankNav() {
-    const snap = buildBankSnap();
-    if (!snap.length) { toast("当前列表没有可刷新的产品"); return; }
-    clearTimeColumns(currentScopeCodes());
-    snap.sort((a, b) => refreshPriorityOf(a) - refreshPriorityOf(b));
+    const { snap, skipped } = takeListRefresh(state.listRows || state.rows || []);
+    if (!snap.length) { toast(skipped ? "最近 3 小时内已更新，列表不再重复刷新" : "当前列表没有可刷新的产品"); return; }
+    clearTimeColumns(new Set(snap.map(s => s.code)));
     await runRefreshQueue(snap, "bank", "#btnRefreshNav", "nav");
   }
   // 刷信息：重新抓取静态信息（最短持有 / 风险 / 成立日期 / 登记编码）。
   // 2026-10-15 规则：① 先清当前银行「抓取时间 / 时间分解」两列；② 四项信息已齐全的产品
   // 直接跳过（不抓、抓取时间留空、时间分解写「齐全」）；③ 刷信息期间不再检索业绩基准是否抓到。
   async function refreshBankInfo() {
-    const snap = buildBankSnap();
-    if (!snap.length) { toast("当前列表没有可刷新的产品"); return; }
-    clearTimeColumns(currentScopeCodes()); // 先清两列，刷新后逐产品重填（齐全的写「齐全」、不足的重抓写明细）
-    snap.sort((a, b) => refreshPriorityOf(a) - refreshPriorityOf(b));
+    const { snap, skipped } = takeListRefresh(state.listRows || state.rows || []);
+    if (!snap.length) { toast(skipped ? "最近 3 小时内已更新，列表不再重复刷新" : "当前列表没有可刷新的产品"); return; }
+    clearTimeColumns(new Set(snap.map(s => s.code))); // 只清本轮要抓的产品，3 小时内已更新的保留上次记录
     await runRefreshQueue(snap, "bank", "#btnRefreshInfo", "info");
   }
   // 刷额度：重新抓取各产品剩余可购额度（发行→代销），不动净值/信息。
   // 2026-10-22 用户规则（额度和净值拆分）：独立按钮，只抓额度。额度写入 MULTI_REAL
   // 的 remainQuota/remainQuotaPct/saleStatus/quotaState/quotaText 等字段，与净值/信息互不干扰。
   async function refreshBankQuota() {
-    const snap = buildBankSnap();
-    if (!snap.length) { toast("当前列表没有可刷新的产品"); return; }
+    const { snap, skipped } = takeListRefresh(state.listRows || state.rows || []);
+    if (!snap.length) { toast(skipped ? "最近 3 小时内已更新，列表不再重复刷新" : "当前列表没有可刷新的产品"); return; }
     // 2026-10-27 用户规则：刷额度先清掉当前银行产品的额度，再刷新。
     // 清掉后表格立即显示空白额度，刷新成功的产品回填新值、失败/无额度的留空（未知），
     // 杜绝「已售罄产品仍显示上一轮 >1亿元」这类陈旧值误导。
-    clearBankQuota(currentScopeCodes());
+    clearBankQuota(new Set(snap.map(s => s.code)));
     // 2026-10-27：刷额度时同步清空列表「刷新来源」列（与刷净值一致），避免刷新期间残留上一轮的旧来源；
     // 本轮结束由 runRefreshQueue 统一把 state.srcRefreshing 置空并重绘，恢复为刚抓到的额度来源。
     state.srcRefreshing = new Set(snap.map(s => s.code));
@@ -5169,22 +5132,14 @@ window.CANDIDATES = [];
     const finish = () => { _refreshBusy = false; };
     // mode="nav"（主页右上刷新图标）只刷新净值、不碰产品信息；缺省则两者都刷
     const mode = (opts && opts.mode) || "";
-    // 先按当前产物快照捕获「未抓到/有无净值/今天是否已刷」——clearTimeColumns 会清空未抓到标记，
-    // 必须在清列之前固化，否则排序时 isFetchFailed 已失效、优先级失效。
-    const todo = [], seen = new Set();
-    for (const r of Engine.products({ bank: "all" })) {
-      const code = (r.code || "").trim().toUpperCase();
-      if (!code || seen.has(code)) continue;
-      seen.add(code);
-      todo.push({ code, bank: r.bank, name: r.name, regCode: r.regCode || null,
-        rf: isRefreshedToday(code), ff: isFetchFailed(code), nv: hasNetValue(code) });
+    const { snap, skipped } = takeListRefresh(Engine.products({ bank: "all" }));
+    if (!snap.length) {
+      finish();
+      toast(skipped ? "最近 3 小时内已更新，列表不再重复刷新" : "数据已刷新");
+      return Promise.resolve();
     }
-    // 清空「抓取时间 / 时间分解」两列 + 上一轮「未抓到」标记，刷新完成后逐产品落新数据
-    clearTimeColumns();
-    if (!todo.length) { state.srcRefreshing = new Set(); Engine.refresh(); renderTable(); renderBanks(); finish(); toast("数据已刷新"); return Promise.resolve(); }
-    // 今天未刷优先、未抓到/从无净值更优先：先补「还没刷到净值」的产品，已刷的兜底
-    todo.sort((a, b) => refreshPriorityOf(a) - refreshPriorityOf(b));
-    return runRefreshQueue(todo, "all", null, mode).then(finish, finish);
+    clearTimeColumns(new Set(snap.map(s => s.code)));
+    return runRefreshQueue(snap, "all", null, mode).then(finish, finish);
   }
 
   /* ---------- 设置弹层 ---------- */
