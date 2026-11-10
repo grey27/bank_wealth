@@ -2974,10 +2974,12 @@ window.CANDIDATES = [];
     } catch (e) { data = null; }
     if (req !== _listReq) return;
     if (!data || data.ok === false) {
+      const why = (data && data.message) || "服务没有返回产品列表";
+      setFootMsg("产品列表加载失败：" + why);
+      if (!tbody || tbody.children.length) return;
       tbody.innerHTML = "";
       $("#emptyTip").classList.remove("hidden");
       const pager = $("#pager"); if (pager) pager.hidden = true;
-      setFootMsg("产品列表加载失败");
       return;
     }
     state.page = data.page || 1;

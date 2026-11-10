@@ -36,6 +36,7 @@ import {
   clearRefreshLogs,
   queryProductPage,
   readNavForCodes,
+  upsertNavRecord,
 } from "./db.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -231,10 +232,11 @@ function navMapInCatalog(map) {
   return out;
 }
 function mergeNavRecord(code, record) {
-  const map = readNavMap();
-  map[code] = navMergeEntry(map[code], record);
-  writeNavMap(navMapInCatalog(map));
-  return map[code];
+  const existing = readNavForCodes([code])[code] || null;
+  const merged = navMergeEntry(existing, record) || record;
+  if (typeof merged.benchmark === "string") merged.benchmark = trimBenchmarkText(merged.benchmark);
+  upsertNavRecord(code, merged);
+  return merged;
 }
 function dropNavCodes(codes) {
   if (!codes || !codes.size) return 0;
@@ -1348,19 +1350,24 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { ok: true, message: "已删除", registry });
   }
   if (u.pathname === "/api/products" && req.method === "GET") {
-    const codes = u.searchParams.get("codes");
-    const page = queryProductPage({
-      page: u.searchParams.get("page"),
-      pageSize: u.searchParams.get("pageSize"),
-      bank: u.searchParams.get("bank") || "all",
-      q: u.searchParams.get("q") || "",
-      sort: u.searchParams.get("sort") || "dailyWan",
-      order: u.searchParams.get("order") || "desc",
-      fav: u.searchParams.get("fav"),
-      brief: u.searchParams.get("brief"),
-      codes: codes == null ? null : codes,
-    });
-    return sendJson(res, 200, { ok: true, ...page });
+    try {
+      const codes = u.searchParams.get("codes");
+      const page = queryProductPage({
+        page: u.searchParams.get("page"),
+        pageSize: u.searchParams.get("pageSize"),
+        bank: u.searchParams.get("bank") || "all",
+        q: u.searchParams.get("q") || "",
+        sort: u.searchParams.get("sort") || "dailyWan",
+        order: u.searchParams.get("order") || "desc",
+        fav: u.searchParams.get("fav"),
+        brief: u.searchParams.get("brief"),
+        codes: codes == null ? null : codes,
+      });
+      return sendJson(res, 200, { ok: true, ...page });
+    } catch (e) {
+      console.error("[products]", e);
+      return sendJson(res, 500, { ok: false, message: (e && e.message) || "产品列表查询失败" });
+    }
   }
   if (u.pathname === "/api/nav" && req.method === "GET") {
     const code = normProdCode(u.searchParams.get("code"));
@@ -1379,7 +1386,11 @@ const server = http.createServer(async (req, res) => {
     }
     const keep = catalogCodesOf(readRegObject().reg);
     if (keep.size && !keep.has(code)) return sendJson(res, 404, { ok: false, message: "产品不在目录里" });
-    mergeNavRecord(code, record);
+    try { mergeNavRecord(code, record); }
+    catch (e) {
+      console.error("[nav]", e);
+      return sendJson(res, 500, { ok: false, message: (e && e.message) || "净值写入失败" });
+    }
     return sendJson(res, 200, { ok: true, code });
   }
 

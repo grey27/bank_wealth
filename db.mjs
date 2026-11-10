@@ -450,51 +450,70 @@ function saveNav(data) {
     code, name, manager, bank, kind, nav, nav_date, nav_latest, currency, remain_quota,
     quota_state, nav_via, nav_port, last_src_mode, last_src_via, last_src_port,
     benchmark, benchmark_full, sources_json, extra_json, updated_at
-  ) VALUES (
-    @code, @name, @manager, @bank, @kind, @nav, @nav_date, @nav_latest, @currency, @remain_quota,
-    @quota_state, @nav_via, @nav_port, @last_src_mode, @last_src_via, @last_src_port,
-    @benchmark, @benchmark_full, @sources_json, @extra_json, @updated_at
-  )`);
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const point = db.prepare("INSERT OR REPLACE INTO nav_point(code, nav_date, nav, acc_nav) VALUES(?, ?, ?, ?)");
   const now = new Date().toISOString();
   for (const rawCode of Object.keys(map)) {
     const rec = map[rawCode];
     if (!rec || typeof rec !== "object") continue;
-    const code = String(rec.code || rawCode).trim().toUpperCase();
-    const extra = {};
-    for (const k of Object.keys(rec)) if (!NAV_KEYS.has(k)) extra[k] = rec[k];
-    snap.run({
-      code,
-      name: rec.name || "",
-      manager: rec.manager || "",
-      bank: rec.bank || "",
-      kind: rec.kind || "",
-      nav: numOrNull(rec.nav),
-      nav_date: rec.navDate || "",
-      nav_latest: numOrNull(rec.navLatest),
-      currency: rec.currency || "",
-      remain_quota: numOrNull(rec.remainQuota),
-      quota_state: rec.quotaState || "",
-      nav_via: rec.navVia || "",
-      nav_port: rec.navPort || "",
-      last_src_mode: rec.lastSrcMode || "",
-      last_src_via: rec.lastSrcVia || "",
-      last_src_port: rec.lastSrcPort || "",
-      benchmark: rec.benchmark || "",
-      benchmark_full: rec.benchmarkFull || "",
-      sources_json: JSON.stringify(rec.navSources || []),
-      extra_json: Object.keys(extra).length ? JSON.stringify(extra) : null,
-      updated_at: now,
-    });
-    const series = Array.isArray(rec.series) ? rec.series : [];
-    for (const pt of series) {
-      if (!pt || !pt[0]) continue;
-      const nav = Number(pt[1]);
-      if (!Number.isFinite(nav)) continue;
-      const acc = pt.length > 2 && pt[2] != null && pt[2] !== "" ? numOrNull(pt[2]) : null;
-      point.run(code, String(pt[0]), nav, acc);
-    }
+    insertNavRecord(snap, point, String(rec.code || rawCode), rec, now);
   }
+}
+
+function insertNavRecord(snap, point, rawCode, rec, now) {
+  const code = String(rawCode || "").trim().toUpperCase();
+  if (!code || !rec || typeof rec !== "object") return;
+  const extra = {};
+  for (const k of Object.keys(rec)) if (!NAV_KEYS.has(k)) extra[k] = rec[k];
+  snap.run(
+    code,
+    rec.name || "",
+    rec.manager || "",
+    rec.bank || "",
+    rec.kind || "",
+    numOrNull(rec.nav),
+    rec.navDate || "",
+    numOrNull(rec.navLatest),
+    rec.currency || "",
+    numOrNull(rec.remainQuota),
+    rec.quotaState || "",
+    rec.navVia || "",
+    rec.navPort || "",
+    rec.lastSrcMode || "",
+    rec.lastSrcVia || "",
+    rec.lastSrcPort || "",
+    rec.benchmark || "",
+    rec.benchmarkFull || "",
+    JSON.stringify(rec.navSources || []),
+    Object.keys(extra).length ? JSON.stringify(extra) : null,
+    now,
+  );
+  const series = Array.isArray(rec.series) ? rec.series : [];
+  for (const pt of series) {
+    if (!pt || !pt[0]) continue;
+    const nav = Number(pt[1]);
+    if (!Number.isFinite(nav)) continue;
+    const acc = pt.length > 2 && pt[2] != null && pt[2] !== "" ? numOrNull(pt[2]) : null;
+    point.run(code, String(pt[0]), nav, acc);
+  }
+}
+
+export function upsertNavRecord(code, record) {
+  const now = new Date().toISOString();
+  const tx = db.transaction(() => {
+    const c = String((record && record.code) || code || "").trim().toUpperCase();
+    if (!c) return;
+    db.prepare("DELETE FROM nav_point WHERE code = ?").run(c);
+    db.prepare("DELETE FROM nav_snapshot WHERE code = ?").run(c);
+    const snap = db.prepare(`INSERT INTO nav_snapshot(
+      code, name, manager, bank, kind, nav, nav_date, nav_latest, currency, remain_quota,
+      quota_state, nav_via, nav_port, last_src_mode, last_src_via, last_src_port,
+      benchmark, benchmark_full, sources_json, extra_json, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const point = db.prepare("INSERT OR REPLACE INTO nav_point(code, nav_date, nav, acc_nav) VALUES(?, ?, ?, ?)");
+    insertNavRecord(snap, point, c, record, now);
+  });
+  tx();
 }
 
 function readNavMap(codes) {
