@@ -34,6 +34,8 @@ import {
   readPidMap as readPidMapDb,
   savePidMap as savePidMapDb,
   clearRefreshLogs,
+  queryProductPage,
+  readNavForCodes,
 } from "./db.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -1345,6 +1347,27 @@ const server = http.createServer(async (req, res) => {
     if (!had && !navDropped) return sendJson(res, 200, { ok: true, message: "产品不在服务器上", registry });
     return sendJson(res, 200, { ok: true, message: "已删除", registry });
   }
+  if (u.pathname === "/api/products" && req.method === "GET") {
+    const codes = u.searchParams.get("codes");
+    const page = queryProductPage({
+      page: u.searchParams.get("page"),
+      pageSize: u.searchParams.get("pageSize"),
+      bank: u.searchParams.get("bank") || "all",
+      q: u.searchParams.get("q") || "",
+      sort: u.searchParams.get("sort") || "dailyWan",
+      order: u.searchParams.get("order") || "desc",
+      fav: u.searchParams.get("fav"),
+      brief: u.searchParams.get("brief"),
+      codes: codes == null ? null : codes,
+    });
+    return sendJson(res, 200, { ok: true, ...page });
+  }
+  if (u.pathname === "/api/nav" && req.method === "GET") {
+    const code = normProdCode(u.searchParams.get("code"));
+    if (!code) return sendJson(res, 400, { ok: false, message: "缺少产品代码" });
+    const record = readNavForCodes([code])[code] || null;
+    return sendJson(res, 200, { ok: true, code, record });
+  }
   if (u.pathname === "/api/nav" && req.method === "POST") {
     let j;
     try { j = await readReqJson(req); }
@@ -1369,7 +1392,11 @@ const server = http.createServer(async (req, res) => {
       const merged = {};
       const files = {};
       let newest = "";
-      for (const kind of STATE_KINDS) {
+      // view=boot：打开首页时不带全部净值序列。列表按 /api/products 分页取。
+      const kinds = u.searchParams.get("view") === "boot"
+        ? STATE_KINDS.filter((k) => k !== "nav")
+        : STATE_KINDS;
+      for (const kind of kinds) {
         const j = readStateFile(kind);
         const n = j ? Object.keys(j.data).length : 0;
         files[kind] = {

@@ -259,6 +259,15 @@ td.cell-name { box-shadow: 6px 0 8px -6px rgba(90, 80, 180, .18); }
 .demo-badge { display: inline-block; margin-left: 4px; font-size: calc(9px * var(--fs)); color: #9a6b00; background: #fff2cf; border: 1px solid #f0d9a3; border-radius: 6px; padding: 0 3px; vertical-align: middle; }
 .manual-badge { display: inline-block; margin-left: 4px; font-size: calc(9px * var(--fs)); color: #0a7a3a; background: #e3f7ea; border: 1px solid #b3e0c2; border-radius: 6px; padding: 0 3px; vertical-align: middle; }
 .empty { padding: 40px 0; text-align: center; color: #999; font-size: calc(14px * var(--fs)); }
+.pager {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 8px 12px 12px; color: #666; font-size: calc(12.5px * var(--fs));
+}
+.pager button {
+  min-height: 32px; padding: 4px 12px; border: 1px solid #d9d4ee; border-radius: 8px;
+  background: #fff; color: #3a3558; font-size: inherit;
+}
+.pager button:disabled { opacity: .4; }
 /* 提示已移到产品列表卡片上方 */
 .foot { position: relative; display: flex; align-items: center; justify-content: center; text-align: center; color: #98959f; font-size: calc(12px * var(--fs)); padding: 2px 12px 8px; }
 /* ---- 状态条左侧按钮组（刷新 / 时间）2026-10-14 改造 ----
@@ -914,6 +923,11 @@ var Fr={},Gr={};var Wr,Hr=function(){function t(t,e,n){var i=this;this._sleepAft
     <tbody id="tbody"></tbody>
   </table>
   <div class="empty hidden" id="emptyTip">没有符合条件的产品</div>
+  <nav class="pager" id="pager" hidden>
+    <button type="button" id="pagePrev">上一页</button>
+    <span id="pageLabel">第 1 / 1 页</span>
+    <button type="button" id="pageNext">下一页</button>
+  </nav>
 </main>
 
 <!-- 常驻窗口底部的横向滚动杆（桌面端专用，与 #tableWrap 横向滚动双向同步） -->
@@ -1681,6 +1695,26 @@ window.MULTI_REAL = window.MULTI_REAL || {};
     return { r, history: m.history, daily: m.daily };
   }
 
+  function lightRow(it, end) {
+    const bank = BANKS[it.bank] || { name: it.bank || "" };
+    const termDays = it.termDays || TERM_DAYS[it.term] || 1;
+    const estDays = it.established
+      ? Math.max(0, Math.round((new Date(end + "T00:00:00Z") - new Date(it.established + "T00:00:00Z")) / 86400000))
+      : null;
+    return {
+      code: it.code, name: it.name || "", fullName: it.name || "",
+      bank: it.bank, bankName: bank.name, manager: it.manager || "",
+      term: it.term, termLabel: it.termDays ? `最短持有${it.termDays}天` : (TERM_LABEL[it.term] || ""),
+      cycleDays: termDays, risk: it.risk || "", established: it.established || "",
+      benchmark: it.benchmark || "", benchmarkFull: it.benchmark || "",
+      navDate: "", nav: null, dailyWan: null, d1: null,
+      y7: null, y14: null, y1m: null, y3m: null, y1y: null, since: null,
+      zeroDays30: null, negDays30: null, estDays, source: "demo",
+      confirmDays: it.confirm || 1, holdDays: null, regCode: "",
+      _lite: true,
+    };
+  }
+
   // 性能优化 F（2026-10-15）：刷单个银行的净值/信息时，只重算该银行的产品指标，
   // 不再把全部 110 产品都重算一遍。复用上次 store 中其它银行的行（各产品指标彼此独立、不交叉依赖）。
   function rebuildBank(bank) {
@@ -1703,11 +1737,33 @@ window.MULTI_REAL = window.MULTI_REAL || {};
     const end = todayCST();
     const rows = [], hist = {}, daily = {};
     for (const it of catalogue()) {
-      const { r, history, daily: d } = _computeRow(it, end);
-      rows.push(r); hist[r.code] = history; daily[r.code] = d;
+      const real = (typeof window !== "undefined" && window.MULTI_REAL && window.MULTI_REAL[it.code]) || null;
+      if (real && real.series && real.series.length) {
+        const { r, history, daily: d } = _computeRow(it, end);
+        rows.push(r); hist[r.code] = history; daily[r.code] = d;
+      } else {
+        rows.push(lightRow(it, end));
+      }
     }
     store.rows = rows; store.hist = hist; store.daily = daily;
     store.last = fmtTs(new Date());
+  }
+
+  function rowsForCodes(codes) {
+    const end = todayCST();
+    const want = new Set((codes || []).map(c => String(c || "").trim().toUpperCase()).filter(Boolean));
+    const out = [];
+    for (const it of catalogue()) {
+      if (!want.has(String(it.code || "").trim().toUpperCase())) continue;
+      const { r, history, daily: d } = _computeRow(it, end);
+      const idx = store.rows.findIndex(x => x.code === r.code);
+      if (idx >= 0) store.rows[idx] = r; else store.rows.push(r);
+      store.hist[r.code] = history;
+      store.daily[r.code] = d;
+      out.push(r);
+    }
+    store.last = fmtTs(new Date());
+    return out;
   }
 
   // ---------------- 排序（与后端 _sort_rows 一致） ----------------
@@ -2024,6 +2080,7 @@ window.MULTI_REAL = window.MULTI_REAL || {};
   window.Engine = {
     BANKS, TERM_LABEL, TERM_DAYS, HOLIDAYS: Array.from(HOLIDAYS).sort(),
     products, banks, product, refresh: build, rebuildBank, seedRegistryFromString,
+    rowsForCodes, catalogueItems: () => catalogue(),
     checkCode, saveProduct, deleteProduct, mgProducts,
     exportData, importData, lookup, setIssuer,
     lastRefresh: () => store.last,
@@ -2100,6 +2157,9 @@ window.CANDIDATES = [];
     editCode: null,
     // 「时间」按钮：显示/隐藏「抓取时间」「时间分解」两列（持久化）
     showTime: (localStorage.getItem("observer_show_time") || "") === "1",
+    page: 1,
+    pageSize: 20,
+    pageCount: 1,
   };
 
   const fmt = {
@@ -2251,7 +2311,8 @@ window.CANDIDATES = [];
     const total = Object.keys(counts).reduce((n, k) => n + counts[k], 0);
     const allChip = `<button class="bank-chip ${state.bank === "all" ? "active" : ""}" data-bank="all">全部${total ? ` ${total}` : ""}</button>`;
     row.innerHTML = allChip + chips.map(b => {
-      const dot = `<i class="dot" style="background:${b.mode === "real" ? "#0a9c46" : "#f5a623"}"></i>`;
+      const hasNav = state.bankHasNav && state.bankHasNav[b.key];
+      const dot = `<i class="dot" style="background:${(hasNav || b.mode === "real") ? "#0a9c46" : "#f5a623"}"></i>`;
       const label = b.short || b.name;
       const cnt = counts[b.key] || 0;
       return `<button class="bank-chip ${state.bank === b.key ? "active" : ""}" data-bank="${b.key}">
@@ -2878,38 +2939,99 @@ window.CANDIDATES = [];
       hero.classList.toggle("held-hidden", state.heldOnly);
     }
   }
-  function renderTable() {
+  function listQueryParams(brief) {
+    const params = new URLSearchParams();
+    params.set("bank", (state.starOnly || state.heldOnly) ? "all" : (state.bank || "all"));
+    params.set("q", state.starOnly ? "" : (state.q || ""));
+    params.set("sort", state.sort || "dailyWan");
+    params.set("order", state.order || "desc");
+    if (state.starOnly) params.set("fav", "1");
+    if (state.heldOnly && HELD_CODES) params.set("codes", [...HELD_CODES].join(","));
+    if (brief) params.set("brief", "1");
+    else {
+      params.set("page", String(state.page || 1));
+      params.set("pageSize", String(state.pageSize || 20));
+    }
+    return params;
+  }
+  function adoptNavMap(nav) {
+    if (!nav) return;
+    window.MULTI_REAL = window.MULTI_REAL || {};
+    for (const code of Object.keys(nav)) {
+      if (nav[code]) window.MULTI_REAL[code] = nav[code];
+    }
+  }
+  let _listReq = 0;
+  let _pageTimer = null;
+  async function renderTable() {
     const tbody = $("#tbody");
     applyStarModeUI();
-    const data = Engine.products({
-      bank: (state.starOnly || state.heldOnly) ? "all" : state.bank,
-      sort: state.sort, order: state.order, q: state.starOnly ? "" : state.q,
-    });
-    state.rows = data;
-    state.lastRefresh = Engine.lastRefresh();
-    state.holidays = Engine.HOLIDAYS;
-    let rows = state.rows.filter(r => (!state.starOnly || isFav(r.code)) && (!state.heldOnly || isCodeHeld(r.code)));
-    // 关键修复：必须对合并列表重新排序，否则刚变动的产品会停在最后一行、表头排序对其无效。
+    const req = ++_listReq;
+    let data = null;
+    try {
+      const resp = await fetch("./api/products?" + listQueryParams(false), { cache: "no-cache" });
+      if (resp.ok) data = await resp.json();
+    } catch (e) { data = null; }
+    if (req !== _listReq) return;
+    if (!data || data.ok === false) {
+      tbody.innerHTML = "";
+      $("#emptyTip").classList.remove("hidden");
+      const pager = $("#pager"); if (pager) pager.hidden = true;
+      setFootMsg("产品列表加载失败");
+      return;
+    }
+    state.page = data.page || 1;
+    state.pageCount = data.pages || 1;
+    if (data.bankStats && !state.bankHasNav) {
+      state.bankHasNav = {};
+      for (const b of data.bankStats) if (b && b.real) state.bankHasNav[b.bank] = 1;
+      renderBanks();
+    }
+    adoptNavMap(data.nav);
+    const codes = (data.items || []).map(it => it.code);
+    let rows = Engine.rowsForCodes(codes);
+    const byCode = new Map(rows.map(r => [r.code, r]));
+    rows = codes.map(c => byCode.get(c)).filter(Boolean);
     rows.forEach(r => { r.heldAnn = heldAnnRate(r.code); });
-    rows = sortRows(rows);
-    state.listRows = rows; // 批量刷新队列用：与页面渲染完全一致的最终行集（过滤+当前排序）
-    // 刷新完成消息（含用时）优先：切走再返回该银行时保持「N/N 个产品 • 用时 Xs • 更新于 ...」，不被静态文案覆盖。
-    // starOnly（收藏）/ heldOnly（持仓）均为跨银行视图，不适用银行维度消息，显示对应静态文案。
+    if (data.sortLocal) rows = sortRows(rows);
+    state.rows = rows;
+    state.listRows = rows;
+    state.lastRefresh = Engine.lastRefresh();
+    const total = data.total || 0;
     const _prevMsg = !state.starOnly && !state.heldOnly && state.bankRefreshMsg
       && state.bankRefreshMsg[state.bank === "all" ? "_all_" : state.bank];
     state.footDefault = _prevMsg
       ? _prevMsg
       : (state.heldOnly
-        ? `共 ${rows.length} 个持仓产品（不分银行）· 点击产品名查看详情`
+        ? `共 ${total} 个持仓产品 · 第 ${state.page}/${state.pageCount} 页`
         : (state.starOnly
-          ? `共 ${rows.length} 个收藏产品（不分银行）· 点击产品名查看详情`
+          ? `共 ${total} 个收藏产品 · 第 ${state.page}/${state.pageCount} 页`
           : (state.bank === "all"
-            ? `共 ${rows.length} 个产品（全部银行）· 更新于 ${state.lastRefresh} · 点击产品名查看详情`
-            : `共 ${rows.length} 个产品 · 更新于 ${state.lastRefresh} · 点击产品名查看详情`)));
+            ? `共 ${total} 个产品 · 第 ${state.page}/${state.pageCount} 页 · 更新于 ${state.lastRefresh}`
+            : `共 ${total} 个产品 · 第 ${state.page}/${state.pageCount} 页 · 更新于 ${state.lastRefresh}`)));
     setFootMsg();
+    const pager = $("#pager");
+    const label = $("#pageLabel");
+    const prev = $("#pagePrev");
+    const next = $("#pageNext");
+    if (pager) pager.hidden = total <= 0;
+    if (label) label.textContent = `第 ${state.page} / ${state.pageCount} 页，每页 ${state.pageSize} 条`;
+    if (prev) prev.disabled = state.page <= 1;
+    if (next) next.disabled = state.page >= state.pageCount;
     if (!rows.length) { tbody.innerHTML = ""; $("#emptyTip").classList.remove("hidden"); return; }
     $("#emptyTip").classList.add("hidden");
     tbody.innerHTML = rows.map(r => rowHtml(r)).join("");
+    const wrap = $("#tableWrap"); if (wrap) wrap.scrollTop = 0;
+  }
+  async function fetchBriefItems() {
+    const resp = await fetch("./api/products?" + listQueryParams(true), { cache: "no-cache" });
+    if (!resp.ok) return state.listRows || [];
+    const data = await resp.json();
+    const cat = new Map((Engine.catalogueItems ? Engine.catalogueItems() : []).map(it => [String(it.code || "").toUpperCase(), it]));
+    return (data.items || []).map(it => {
+      const src = cat.get(String(it.code || "").toUpperCase());
+      return { code: it.code, bank: (src && src.bank) || it.bank, name: (src && src.name) || it.name, regCode: (src && src.regCode) || null };
+    });
   }
 
   /* ---------- 表头排序 ---------- */
@@ -2926,8 +3048,28 @@ window.CANDIDATES = [];
     });
   }
 
+  async function ensureProductSeries(code) {
+    code = String(code || "").trim().toUpperCase();
+    if (!code) return;
+    const real = window.MULTI_REAL && window.MULTI_REAL[code];
+    if (!(real && real.series && real.series.length)) {
+      try {
+        const resp = await fetch("./api/nav?code=" + encodeURIComponent(code), { cache: "no-cache" });
+        if (resp.ok) {
+          const j = await resp.json();
+          if (j && j.record) {
+            window.MULTI_REAL = window.MULTI_REAL || {};
+            window.MULTI_REAL[code] = j.record;
+          }
+        }
+      } catch (e) {}
+    }
+    if (window.Engine && typeof window.Engine.rowsForCodes === "function") Engine.rowsForCodes([code]);
+  }
+
   /* ---------- 详情抽屉 ---------- */
-  function openDrawer(code) {
+  async function openDrawer(code) {
+    try { await ensureProductSeries(code); } catch (e) {}
     state.drawerCode = code;
     state.chartKey = "wan";
     let d = Engine.product(code);
@@ -5091,7 +5233,8 @@ window.CANDIDATES = [];
   }
   // 刷净值：只重新抓取净值（信息若已补全则跳过），先清本轮产品的「抓取时间 / 时间分解」
   async function refreshBankNav() {
-    const { snap, skipped } = takeListRefresh(state.listRows || state.rows || []);
+    const items = await fetchBriefItems();
+    const { snap, skipped } = takeListRefresh(items);
     if (!snap.length) { toast(skipped ? "最近 3 小时内已更新，列表不再重复刷新" : "当前列表没有可刷新的产品"); return; }
     clearTimeColumns(new Set(snap.map(s => s.code)));
     await runRefreshQueue(snap, "bank", "#btnRefreshNav", "nav");
@@ -5100,7 +5243,8 @@ window.CANDIDATES = [];
   // 2026-10-15 规则：① 先清当前银行「抓取时间 / 时间分解」两列；② 四项信息已齐全的产品
   // 直接跳过（不抓、抓取时间留空、时间分解写「齐全」）；③ 刷信息期间不再检索业绩基准是否抓到。
   async function refreshBankInfo() {
-    const { snap, skipped } = takeListRefresh(state.listRows || state.rows || []);
+    const items = await fetchBriefItems();
+    const { snap, skipped } = takeListRefresh(items);
     if (!snap.length) { toast(skipped ? "最近 3 小时内已更新，列表不再重复刷新" : "当前列表没有可刷新的产品"); return; }
     clearTimeColumns(new Set(snap.map(s => s.code))); // 只清本轮要抓的产品，3 小时内已更新的保留上次记录
     await runRefreshQueue(snap, "bank", "#btnRefreshInfo", "info");
@@ -5109,7 +5253,8 @@ window.CANDIDATES = [];
   // 2026-10-22 用户规则（额度和净值拆分）：独立按钮，只抓额度。额度写入 MULTI_REAL
   // 的 remainQuota/remainQuotaPct/saleStatus/quotaState/quotaText 等字段，与净值/信息互不干扰。
   async function refreshBankQuota() {
-    const { snap, skipped } = takeListRefresh(state.listRows || state.rows || []);
+    const items = await fetchBriefItems();
+    const { snap, skipped } = takeListRefresh(items);
     if (!snap.length) { toast(skipped ? "最近 3 小时内已更新，列表不再重复刷新" : "当前列表没有可刷新的产品"); return; }
     // 2026-10-27 用户规则：刷额度先清掉当前银行产品的额度，再刷新。
     // 清掉后表格立即显示空白额度，刷新成功的产品回填新值、失败/无额度的留空（未知），
@@ -5160,13 +5305,21 @@ window.CANDIDATES = [];
     const chip = e.target.closest(".bank-chip");
     if (!chip) return;
     state.bank = chip.dataset.bank;
+    state.page = 1;
     renderBanks(); renderTable();
+  });
+  $("#pagePrev").addEventListener("click", () => {
+    if (state.page > 1) { state.page -= 1; renderTable(); }
+  });
+  $("#pageNext").addEventListener("click", () => {
+    if (state.page < state.pageCount) { state.page += 1; renderTable(); }
   });
 
   $$(".ptable thead th[data-key]").forEach(th => th.addEventListener("click", () => {
     const key = th.dataset.key;
     if (state.sort === key) { state.order = state.order === "desc" ? "asc" : "desc"; }
     else { state.sort = key; state.order = key === "name" ? "asc" : "desc"; }
+    state.page = 1;
     // 批量刷新进行中点排序：列表立即按新排序 + 已抓到的最新净值重渲染；
     // 刷新队列是点击「刷新」时的快照，保持原顺序继续，不受新排序影响。
     if (_bankRefresh.busy) Engine.refresh();
@@ -5391,6 +5544,7 @@ window.CANDIDATES = [];
     // 与「持有」按钮互斥：开启收藏时关闭持仓，反之亦然
     if (state.heldOnly) { state.heldOnly = false; const hb = $("#btnHeld"); if (hb) hb.classList.remove("active"); }
     state.starOnly = !state.starOnly;
+    state.page = 1;
     this.classList.toggle("active", state.starOnly);
     renderTable();
   });
@@ -5404,6 +5558,7 @@ window.CANDIDATES = [];
     // 与「收藏」按钮互斥：开启持仓时关闭收藏，反之亦然
     if (state.starOnly) { state.starOnly = false; const sb = $("#btnStar"); if (sb) sb.classList.remove("active"); }
     state.heldOnly = !state.heldOnly;
+    state.page = 1;
     this.classList.toggle("active", state.heldOnly);
     renderTable();
   });
@@ -5414,7 +5569,9 @@ window.CANDIDATES = [];
   });
   $("#searchInput").addEventListener("input", function () {
     state.q = this.value.trim();
-    renderTable();
+    state.page = 1;
+    clearTimeout(_pageTimer);
+    _pageTimer = setTimeout(renderTable, 200);
   });
 
   /* --- 通用删除确认弹层 --- */
@@ -5691,7 +5848,7 @@ window.CANDIDATES = [];
   async function applyGhaRegSeed() {
     const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
     const done = await withTimeout((async () => {
-      const resp = await fetch("./api/state?t=" + Date.now(), { cache: "no-cache" });
+      const resp = await fetch("./api/state?view=boot&t=" + Date.now(), { cache: "no-cache" });
       if (!resp.ok) return false;
       const p = await resp.json();
       let regStr = p && p.data && p.data.observer_reg_v1;
@@ -5721,11 +5878,8 @@ window.CANDIDATES = [];
     try { localStorage.removeItem("observer_tocand"); } catch (e) {}
     bindConfirm();
     bindNotice();
-    // 顺序：先按服务端 registry 重载目录（线上），再用它做 NAV 孤儿 prune，最后叠加同源净值。
-    // 先 seed 保证 restoreLookupReal 的 prune 用的是「正确（服务端）registry」，不误删有效 NAV。
+    // 目录用 view=boot，不带全部净值。列表由 renderTable 按页向 /api/products 取。
     try { await applyGhaRegSeed(); } catch (e) { console.warn("[gha] 同源目录播种失败（不影响其它功能）：" + ((e && e.message) || e)); }
-    restoreLookupReal();
-    try { await applyGhaNavOverlay(); } catch (e) { console.warn("[gha] 同源净值叠加失败（不影响其它银行）：" + ((e && e.message) || e)); }
     // 「时间」按钮状态恢复：持久化为开 → 表格加 show-time、按钮置 active
     if (state.showTime) {
       const pt = document.querySelector("#tableWrap .ptable") || document.querySelector(".ptable");

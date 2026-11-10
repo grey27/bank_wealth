@@ -111,7 +111,7 @@
   /* ---------------- 启动：决定以文件为准还是以本页为准 ---------------- */
   var srv = null, enabled = false;
   try {
-    var r = getSync(API + "?t=" + Date.now());
+    var r = getSync(API + "?view=boot&t=" + Date.now());
     if (r.status === 200) { srv = JSON.parse(r.responseText || "{}"); enabled = true; }
     /* 其它状态（如旧版 serve.mjs 返回 404）→ enabled 保持 false，本次不同步 */
   } catch (e) {

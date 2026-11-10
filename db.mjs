@@ -450,9 +450,14 @@ function saveNav(data) {
   }
 }
 
-function readNavMap() {
+function readNavMap(codes) {
   const map = {};
-  for (const r of db.prepare("SELECT * FROM nav_snapshot").all()) {
+  const limited = Array.isArray(codes) && codes.length > 0;
+  const marks = limited ? codes.map(() => "?").join(",") : "";
+  const snaps = limited
+    ? db.prepare(`SELECT * FROM nav_snapshot WHERE code IN (${marks})`).all(...codes)
+    : db.prepare("SELECT * FROM nav_snapshot").all();
+  for (const r of snaps) {
     let sources = [];
     try { sources = JSON.parse(r.sources_json || "[]"); } catch (e) { sources = []; }
     let extra = {};
@@ -480,13 +485,146 @@ function readNavMap() {
       series: [],
     });
   }
-  for (const r of db.prepare("SELECT code, nav_date, nav, acc_nav FROM nav_point ORDER BY code, nav_date").all()) {
+  const points = limited
+    ? db.prepare(`SELECT code, nav_date, nav, acc_nav FROM nav_point WHERE code IN (${marks}) ORDER BY code, nav_date`).all(...codes)
+    : db.prepare("SELECT code, nav_date, nav, acc_nav FROM nav_point ORDER BY code, nav_date").all();
+  for (const r of points) {
     if (!map[r.code]) {
       map[r.code] = { code: r.code, series: [] };
     }
     map[r.code].series.push([r.nav_date, r.nav, r.acc_nav]);
   }
   return map;
+}
+
+export function readNavForCodes(codes) {
+  const list = [];
+  const seen = new Set();
+  for (const raw of codes || []) {
+    const code = String(raw || "").trim().toUpperCase();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    list.push(code);
+  }
+  if (!list.length) return {};
+  return readNavMap(list);
+}
+
+// 首页列表。默认每页 20 条，只附带这一页的净值序列。
+// 万收、名称、风险、成立日、净值日、持有天数在全表排序后分页；
+// 其余指标列由页面在当前页内排序（不把全部净值序列拉到浏览器）。
+export function queryProductPage(opt) {
+  const o = opt || {};
+  const brief = o.brief === true || o.brief === "1" || o.brief === 1;
+  const pageSize = brief ? 5000 : Math.min(100, Math.max(1, Number(o.pageSize) || 20));
+  let page = brief ? 1 : Math.max(1, Number(o.page) || 1);
+  const bank = String(o.bank || "").trim();
+  const q = String(o.q || "").trim();
+  const sort = String(o.sort || "dailyWan");
+  const desc = String(o.order || "desc").toLowerCase() !== "asc";
+  const dir = desc ? "DESC" : "ASC";
+  const estDir = desc ? "ASC" : "DESC";
+  const fav = o.fav === true || o.fav === "1" || o.fav === 1;
+  let codeList = null;
+  if (o.codes != null) {
+    const raw = Array.isArray(o.codes) ? o.codes : String(o.codes).split(",");
+    codeList = [];
+    const seen = new Set();
+    for (const item of raw) {
+      const code = String(item || "").trim().toUpperCase();
+      if (!code || seen.has(code)) continue;
+      seen.add(code);
+      codeList.push(code);
+    }
+  }
+
+  const where = ["p.code NOT IN (SELECT code FROM product_hidden)"];
+  const args = [];
+  if (bank && bank !== "all") {
+    where.push("p.bank = ?");
+    args.push(bank);
+  }
+  if (q) {
+    const like = "%" + q.replace(/[%_]/g, "") + "%";
+    where.push("(p.name LIKE ? OR UPPER(p.code) LIKE UPPER(?) OR IFNULL(p.manager,'') LIKE ?)");
+    args.push(like, like, like);
+  }
+  if (fav) where.push("p.code IN (SELECT code FROM product_fav)");
+  if (codeList) {
+    if (!codeList.length) {
+      return { total: 0, page: 1, pageSize, pages: 1, sort, sortLocal: false, items: [], nav: {}, bankStats: [] };
+    }
+    where.push(`p.code IN (${codeList.map(() => "?").join(",")})`);
+    args.push(...codeList);
+  }
+  const whereSql = where.join(" AND ");
+  const total = db.prepare(`SELECT COUNT(*) AS n FROM product p WHERE ${whereSql}`).get(...args).n;
+  const pageCount = brief ? 1 : Math.max(1, Math.ceil(total / pageSize) || 1);
+  if (page > pageCount) page = pageCount;
+
+  const orderMap = {
+    name: `p.name COLLATE NOCASE ${dir}, p.code`,
+    risk: `CASE WHEN p.risk IS NULL OR p.risk = '' THEN 1 ELSE 0 END, p.risk ${dir}, p.code`,
+    established: `CASE WHEN p.established IS NULL OR p.established = '' THEN 1 ELSE 0 END, p.established ${dir}, p.code`,
+    navDate: `CASE WHEN s.nav_date IS NULL OR s.nav_date = '' THEN 1 ELSE 0 END, s.nav_date ${dir}, p.code`,
+    cycleDays: `CASE WHEN p.term_days IS NULL THEN 1 ELSE 0 END, p.term_days ${dir}, p.code`,
+    holdDays: `CASE WHEN p.term_days IS NULL THEN 1 ELSE 0 END, p.term_days ${dir}, p.code`,
+    estDays: `CASE WHEN p.established IS NULL OR p.established = '' THEN 1 ELSE 0 END, p.established ${estDir}, p.code`,
+    dailyWan: `CASE WHEN w.daily_wan IS NULL THEN 1 ELSE 0 END, w.daily_wan ${dir}, p.code`,
+  };
+  const sortLocal = !orderMap[sort];
+  const orderSql = orderMap[sort] || orderMap.name;
+  const offset = brief ? 0 : (page - 1) * pageSize;
+  const limit = brief ? 5000 : pageSize;
+  const items = db.prepare(`
+    WITH ranked AS (
+      SELECT code, nav, nav_date,
+             LAG(nav) OVER (PARTITION BY code ORDER BY nav_date) AS prev_nav,
+             LAG(nav_date) OVER (PARTITION BY code ORDER BY nav_date) AS prev_date,
+             ROW_NUMBER() OVER (PARTITION BY code ORDER BY nav_date DESC) AS rn
+      FROM nav_point
+    ),
+    wan AS (
+      SELECT r.code,
+             CASE
+               WHEN r.prev_nav IS NULL OR r.prev_nav = 0 THEN NULL
+               WHEN IFNULL(p.term, 'daily') != 'daily'
+                    AND r.prev_date IS NOT NULL
+                    AND (julianday(r.nav_date) - julianday(r.prev_date)) >= 4
+                 THEN ((r.nav - r.prev_nav) / r.prev_nav * 10000.0)
+                      / (julianday(r.nav_date) - julianday(r.prev_date))
+               ELSE (r.nav - r.prev_nav) / r.prev_nav * 10000.0
+             END AS daily_wan
+      FROM ranked r
+      JOIN product p ON p.code = r.code
+      WHERE r.rn = 1
+    )
+    SELECT p.code AS code, p.bank AS bank, p.name AS name
+    FROM product p
+    LEFT JOIN wan w ON w.code = p.code
+    LEFT JOIN nav_snapshot s ON s.code = p.code
+    WHERE ${whereSql}
+    ORDER BY ${orderSql}
+    LIMIT ? OFFSET ?
+  `).all(...args, limit, offset);
+  return {
+    total,
+    page: brief ? 1 : page,
+    pageSize: brief ? items.length : pageSize,
+    pages: brief ? 1 : pageCount,
+    sort,
+    sortLocal,
+    items: items.map((r) => ({ code: r.code, bank: r.bank, name: r.name || "" })),
+    nav: brief ? {} : readNavForCodes(items.map((r) => r.code)),
+    bankStats: db.prepare(`
+      SELECT p.bank AS bank, COUNT(*) AS n,
+             SUM(CASE WHEN s.code IS NOT NULL THEN 1 ELSE 0 END) AS real
+      FROM product p
+      LEFT JOIN nav_snapshot s ON s.code = p.code
+      WHERE p.code NOT IN (SELECT code FROM product_hidden)
+      GROUP BY p.bank
+    `).all(),
+  };
 }
 
 function saveLog(data) {
