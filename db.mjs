@@ -4,11 +4,60 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import Database from "better-sqlite3";
 
+const require = createRequire(import.meta.url);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const DB_FILE = path.join(ROOT, "wealth.sqlite");
+
+function openDatabase(file) {
+  try {
+    const Database = require("better-sqlite3");
+    const db = new Database(file);
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    return db;
+  } catch (err) {
+    const code = err && err.code;
+    const missing = code === "MODULE_NOT_FOUND" || code === "ERR_DLOPEN_FAILED";
+    if (!missing) throw err;
+    const builtin = typeof process.getBuiltinModule === "function"
+      ? process.getBuiltinModule("node:sqlite")
+      : null;
+    const DatabaseSync = builtin && builtin.DatabaseSync;
+    if (!DatabaseSync) {
+      throw new Error("缺少数据库模块 better-sqlite3。请在项目目录执行 npm install 后再启动。");
+    }
+    const db = new DatabaseSync(file);
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA foreign_keys = ON");
+    let depth = 0;
+    db.pragma = (source) => db.exec("PRAGMA " + source);
+    db.transaction = (fn) => (...args) => {
+      const save = "sp_" + depth;
+      if (depth === 0) db.exec("BEGIN");
+      else db.exec("SAVEPOINT " + save);
+      depth += 1;
+      try {
+        const result = fn(...args);
+        depth -= 1;
+        if (depth === 0) db.exec("COMMIT");
+        else db.exec("RELEASE " + save);
+        return result;
+      } catch (error) {
+        depth -= 1;
+        if (depth === 0) db.exec("ROLLBACK");
+        else {
+          db.exec("ROLLBACK TO " + save);
+          db.exec("RELEASE " + save);
+        }
+        throw error;
+      }
+    };
+    return db;
+  }
+}
 
 const LABELS = {
   core: "产品目录与偏好",
@@ -16,9 +65,7 @@ const LABELS = {
   log: "运行日志（抓取调试）",
 };
 
-const db = new Database(DB_FILE);
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+const db = openDatabase(DB_FILE);
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS product (
