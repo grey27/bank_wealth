@@ -3002,7 +3002,7 @@ window.CANDIDATES = [];
     const total = data.total || 0;
     const _prevMsg = !state.starOnly && !state.heldOnly && state.bankRefreshMsg
       && state.bankRefreshMsg[state.bank === "all" ? "_all_" : state.bank];
-    state.footDefault = _prevMsg
+    const nextFoot = _prevMsg
       ? _prevMsg
       : (state.heldOnly
         ? `共 ${total} 个持仓产品 · 第 ${state.page}/${state.pageCount} 页`
@@ -3011,6 +3011,9 @@ window.CANDIDATES = [];
           : (state.bank === "all"
             ? `共 ${total} 个产品 · 第 ${state.page}/${state.pageCount} 页 · 更新于 ${state.lastRefresh}`
             : `共 ${total} 个产品 · 第 ${state.page}/${state.pageCount} 页 · 更新于 ${state.lastRefresh}`)));
+    // 失败原因、刷新结果等明确脚注先停留 FOOT_HOLD_MS，列表重绘先记下来，到点再换上。
+    if (footMsgHeld()) _footPending = nextFoot;
+    else state.footDefault = nextFoot;
     setFootMsg();
     const pager = $("#pager");
     const label = $("#pageLabel");
@@ -5083,12 +5086,35 @@ window.CANDIDATES = [];
     return infoFieldsComplete({ holdDays: rec.holdDays, risk: rec.risk, established: rec.established, regCode: rec.regCode });
   }
 
+  // 明确写入的脚注（失败原因、刷新结果）停留 30 秒，避免列表一重绘就被「共 N 个产品」盖掉。
+  const FOOT_HOLD_MS = 30000;
+  let _footHoldUntil = 0;
+  let _footPending = "";
+  let _footHoldTimer = null;
+  function footMsgHeld() { return _footHoldUntil > Date.now(); }
+  function holdFootMsg() {
+    _footHoldUntil = Date.now() + FOOT_HOLD_MS;
+    clearTimeout(_footHoldTimer);
+    _footHoldTimer = setTimeout(() => {
+      _footHoldUntil = 0;
+      if (_footPending) {
+        state.footDefault = _footPending;
+        _footPending = "";
+      }
+      setFootMsg();
+    }, FOOT_HOLD_MS);
+  }
+
   // 脚注文案统一出口：
   // - 批量刷新进行中、且当前查看的正是「正在刷新的银行」时，显示动态进度（含正在拉取的产品名）；
   // - 否则（未刷新 / 正在查看其它银行）显示该银行的静态文案（state.footDefault）。
   function setFootMsg(text) {
     const el = $("#footMsg"); if (!el) return;
-    if (text !== undefined) state.footDefault = text;
+    if (text !== undefined) {
+      state.footDefault = text;
+      _footPending = "";
+      holdFootMsg();
+    }
     // 动态进度：① scope=all（一级：所有产品）始终显示；② scope=bank（二级）仅发起刷新时所在视图显示
     if (_bankRefresh && _bankRefresh.busy && (_bankRefresh.scope === "all" || _bankRefresh.crossBank || _bankRefresh.bank === state.bank)) {
       renderRefreshProgress();
