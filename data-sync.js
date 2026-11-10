@@ -24,7 +24,9 @@
   var PREFIX = "observer_";        // 只同步这个前缀的键
   // 字号是本机显示偏好。产品目录 observer_reg_v1 只由服务端 /api/catalog 写入，
   // 浏览器整包同步不能把它推回去，否则删掉的产品会从旧缓存里复活。
-  var EXCLUDE = { observer_fs: 1, observer_reg_v1: 1 };
+  // 净值 observer_lookup_* 只由 /api/nav 按产品写入。整包再带上全部序列，
+  // 请求体会到数 MB，反代默认约 1MB 时直接 413。
+  var EXCLUDE = { observer_fs: 1, observer_reg_v1: 1, observer_lookup_real: 1, observer_lookup_icbc: 1 };
   var API = "/api/state";
   var STAMP = "datasync_savedAt";  // 记录本页最后一次同步的文件时间戳（不参与同步）
   var DEBOUNCE_MS = 1200;
@@ -131,9 +133,11 @@
     if (srvData.observer_reg_v1) {
       try { localStorage.setItem("observer_reg_v1", srvData.observer_reg_v1); } catch (e) {}
     }
-    if (srvData.observer_lookup_real) {
-      try { localStorage.setItem("observer_lookup_real", srvData.observer_lookup_real); } catch (e) {}
-    }
+    // 旧缓存里的整表净值不再回灌。列表和详情分别走 /api/products、/api/nav。
+    try {
+      localStorage.removeItem("observer_lookup_real");
+      localStorage.removeItem("observer_lookup_icbc");
+    } catch (e) {}
     if (srvN > 0 && (!myStamp || (srvAt && srvAt > myStamp))) {
       /* 文件存在，且本页从未同步过 / 文件更新 → 以文件为准 */
       if (localN > 0) backupLocal();   // 覆盖前先留底
@@ -141,6 +145,7 @@
       for (var k in srvData) {
         if (!Object.prototype.hasOwnProperty.call(srvData, k)) continue;
         if (k === "observer_fs") continue;        // 字号等显示偏好不覆盖本机
+        if (k.indexOf("observer_lookup_") === 0) continue;  // 净值不从整包状态回灌
         try { localStorage.setItem(k, srvData[k]); applied++; } catch (e) {}
       }
       setStamp(srvAt);

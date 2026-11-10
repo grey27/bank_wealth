@@ -1453,6 +1453,10 @@ const server = http.createServer(async (req, res) => {
 
         const buckets = { core: {}, nav: {}, log: {} };
         for (const k of Object.keys(clean)) buckets[stateBucketOf(k)][k] = clean[k];
+        // 净值只走 POST /api/nav。整包里的净值序列又大又会整表重写，这里直接丢掉。
+        for (const k of Object.keys(buckets.nav)) {
+          if (k.indexOf("observer_lookup_") === 0) delete buckets.nav[k];
+        }
 
         // 产品目录只由 /api/catalog 改。浏览器整包同步不能把旧缓存写回 产品数据.json。
         try {
@@ -1461,22 +1465,6 @@ const server = http.createServer(async (req, res) => {
             buckets.core.observer_reg_v1 = disk.data.observer_reg_v1;
           } else {
             delete buckets.core.observer_reg_v1;
-          }
-          const incMap = parseNavValue(buckets.nav.observer_lookup_real);
-          if (incMap && typeof incMap === "object") {
-            const diskMap = readNavMap();
-            const curN = Object.keys(diskMap).length;
-            const incN = Object.keys(incMap).length;
-            const merged = Object.assign({}, diskMap);
-            // 浏览器整包推送可能是另一台设备的旧缓存。按净值日合并，不让旧序列覆盖更新的那份。
-            // 条数断崖（几乎为空）直接忽略这次推送，避免把服务端净值清掉。
-            if (!(curN >= 20 && incN < curN * 0.3)) {
-              for (const ck of Object.keys(incMap)) merged[ck] = navMergeEntry(diskMap[ck], incMap[ck]);
-            } else {
-              console.warn("[state] 净值表缩水保护：磁盘 " + curN + " 条，前端仅推送 " + incN + " 条，已按磁盘保留");
-            }
-            const kept = navMapInCatalog(merged);
-            buckets.nav.observer_lookup_real = JSON.stringify(kept);
           }
         } catch (e) { /* 目录保护失败不阻断其它键写入 */ }
         const navWarn = [];

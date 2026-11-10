@@ -3765,32 +3765,16 @@ window.CANDIDATES = [];
   // 2026-10-22：icbc 分桶已并入 real 桶，不再按 bank 分键。bank 参数保留仅为兼容调用方签名，
   // 净值来源仍由对象自身的 navVia 标识（与存放在哪个桶无关）。
   function persistLookupReal(code, obj, bank) {
-    let key = "";
-    try {
-      key = "observer_lookup_real";
-      const map = JSON.parse(localStorage.getItem(key) || "{}");
-      map[code] = obj;
-      try {
-        localStorage.setItem(key, JSON.stringify(map));
-        // 净值立刻写入服务端文件。另一台设备打开时读这份文件，而不是各自浏览器里的旧缓存。
-        fetch("/api/nav", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code: code, record: obj }),
-        }).catch(() => {});
-      } catch (we) {
-        // 写入失败绝不能再静默：最常见原因是 localStorage 配额超限（~5MB），
-        // 症状正是「刷新时一切正常、重开后全部退回演示」。必须显式暴露。
-        if (!window.__lsQuotaWarned) {
-          window.__lsQuotaWarned = true;
-          toast("⚠️ 本地存储写入失败（可能空间不足），抓到的净值重开后会丢失，详见控制台");
-        }
-        console.error("[persist] localStorage 写入失败 key=" + key + " code=" + code +
-          " map字节≈" + JSON.stringify(map).length + " err=" + ((we && we.message) || we));
-      }
-    } catch (e) {
-      console.error("[persist] 读旧值/解析失败 key=" + key + " code=" + code + " err=" + ((e && e.message) || e));
-    }
+    // 只提交这一只产品。整表净值不再写回 localStorage，否则 data-sync 会把全部序列 POST 到 /api/state。
+    window.MULTI_REAL = window.MULTI_REAL || {};
+    window.MULTI_REAL[code] = obj;
+    fetch("/api/nav", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: code, record: obj }),
+    }).catch((e) => {
+      console.error("[persist] 净值写入失败 code=" + code + " err=" + ((e && e.message) || e));
+    });
   }
   function restoreLookupReal() {
     try {
