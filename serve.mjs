@@ -1610,4 +1610,7 @@ server.listen(PORT, () => {
   import("./scripts/boc-catalog.mjs")
     .then((m) => m.startBocCatalogSchedule())
     .catch((e) => console.warn("[boc-catalog] 定时任务没有启动：" + ((e && e.message) || e)));
+  import("./scripts/boc-nav.mjs")
+    .then((m) => m.startBocNavSchedule())
+    .catch((e) => console.warn("[boc-nav] 定时任务没有启动：" + ((e && e.message) || e)));
 });

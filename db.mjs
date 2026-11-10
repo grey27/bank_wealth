@@ -576,6 +576,32 @@ export function readNavForCodes(codes) {
   return readNavMap(list);
 }
 
+// 中国银行净值定时任务用：收藏在前，隐藏产品不抓。
+export function listBocNavTargets() {
+  return db.prepare(`
+    SELECT p.code AS code, p.name AS name,
+           CASE WHEN f.code IS NULL THEN 0 ELSE 1 END AS fav
+    FROM product p
+    LEFT JOIN product_fav f ON f.code = p.code
+    WHERE p.bank = 'boc'
+      AND p.code NOT IN (SELECT code FROM product_hidden)
+    ORDER BY CASE WHEN f.code IS NULL THEN 1 ELSE 0 END, COALESCE(f.sort_order, 0), p.code
+  `).all();
+}
+
+export function touchRefreshAt(code, durationMs) {
+  const c = String(code || "").trim().toUpperCase();
+  if (!c) return;
+  const ms = durationMs == null ? null : Math.round(Number(durationMs));
+  const now = Date.now();
+  const row = db.prepare("SELECT code FROM refresh_state WHERE code = ?").get(c);
+  if (row) {
+    db.prepare("UPDATE refresh_state SET refreshed_at = ?, duration_ms = ?, failed = 0 WHERE code = ?").run(now, ms, c);
+  } else {
+    db.prepare("INSERT INTO refresh_state(code, refreshed_at, duration_ms, failed) VALUES(?, ?, ?, 0)").run(c, now, ms);
+  }
+}
+
 // 首页列表。默认每页 20 条，只附带这一页的净值序列。
 // 万收、名称、风险、成立日、净值日、持有天数在全表排序后分页；
 // 其余指标列由页面在当前页内排序（不把全部净值序列拉到浏览器）。
